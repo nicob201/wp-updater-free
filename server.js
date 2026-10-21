@@ -8,6 +8,7 @@ const readline = require('node:readline');
 const { StringDecoder } = require('node:string_decoder');
 const { spawn, execFile, execFileSync } = require('node:child_process');
 const S = require('./lib/state');
+const { SITE_ID } = require('./lib/config');
 
 // The environment variables exist for the tests; normal use doesn't touch them
 const PORT = Number(process.env.WPU_PORT || 8787);
@@ -19,10 +20,10 @@ const HOSTS = [`127.0.0.1:${PORT}`, `localhost:${PORT}`];
 const FILES = { '/': ['index.html', 'text/html'], '/styles.css': ['styles.css', 'text/css'], '/app.js': ['app.js', 'text/javascript'] };
 const LOG = path.join(DATA, 'last-run.log');
 const RUNNING = path.join(DATA, 'running.json');   // exists while an update runs
-const RE_DOMAIN = /^[a-z0-9.-]+$/;
 
 fs.mkdirSync(DATA, { recursive: true });
 const state = S.newState();
+state.ssh = null;
 const clients = new Set();
 let listing = null;   // listing process in progress
 let reader = null;    // interval that reads the update's log
@@ -153,7 +154,7 @@ function update(req, res) {
     let ids;
     try { ids = JSON.parse(body).sites; } catch { return reply(res, 400); }
     if (state.run?.active || listing) return reply(res, 409);
-    const valid = d => typeof d === 'string' && RE_DOMAIN.test(d) && state.sites[d]?.pending.length > 0
+    const valid = d => typeof d === 'string' && SITE_ID.test(d) && state.sites[d]?.pending.length > 0
       && ['pending', 'review'].includes(state.sites[d].status);
     if (!Array.isArray(ids) || !ids.length || !ids.every(valid)) return reply(res, 400);
     start([...new Set(ids)]);
