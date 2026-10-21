@@ -1,90 +1,154 @@
 #!/bin/bash
-# Updates WordPress core, plugins, themes and translations over SSH + WP-CLI.
-# Usage: ./updater.sh                        (only shows what's pending, touches nothing)
-#        ./updater.sh --apply                (backs up each site's database and updates them all)
-#        ./updater.sh --apply example.com    (only that one)
-#        ./updater.sh --json [domain…]       (pending updates as JSON, for the page)
-#        ./updater.sh --probe                (exits 0 if the SSH connection works)
+# Lists and applies WordPress updates (core, plugins, themes, translations) on one server over SSH + WP-CLI.
+# The bridge (server.js) passes the connection in WPU_* variables.
+# Usage: updater.sh --probe           checks the connection and the server's tools: prints OK or why not
+#        updater.sh --json            finds the WordPress sites and prints what's pending as JSON lines
+#        updater.sh --apply <path>…   backs up each site and updates it
 set -eo pipefail
 cd "$(dirname "$0")"
 
-HOST="wp"                             # alias defined in ~/.ssh/config
-EXCLUDE="elementor,elementor-pro"     # updated by hand, together
-BACKUPS="data/backups"
-MODE=""
-case "$1" in --apply|--json|--probe) MODE=${1#--}; shift ;; esac
-[ "$MODE" = probe ] && exec ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" true >/dev/null 2>&1
-SITES=("$@")
-# For the page: never ask for a password (nobody is there to type it) and never hang if the network drops
-OPTS=()
-[ "$MODE" = json ] && OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
-# No domains given: every WordPress in the account
-[ ${#SITES[@]} -gt 0 ] || SITES=($(ssh "${OPTS[@]}" "$HOST" 'ls domains/*/public_html/wp-config.php' | cut -d/ -f2))
-[ "$MODE" = json ] && echo "{\"sites\":[$(printf '"%s",' "${SITES[@]}" | sed 's/,$//')]}"
+for V in WPU_SERVER WPU_HOST WPU_USER WPU_KEY; do
+  [ -n "${!V}" ] || { echo "updater.sh: $V is not set" >&2; exit 2; }
+done
+WPU_PORT=${WPU_PORT:-22}
+WPU_KNOWN_HOSTS=${WPU_KNOWN_HOSTS:-$(dirname "$WPU_KEY")/known_hosts}
+WPU_BACKUPS=${WPU_BACKUPS:-data/backups}
+MODE=$1; shift || true
+
+# Never ask for a password (nobody is there to type it) and never hang if the network drops
+SSH_OPTS=(-i "$WPU_KEY" -p "$WPU_PORT" -o IdentitiesOnly=yes -o "UserKnownHostsFile=$WPU_KNOWN_HOSTS" -o StrictHostKeyChecking=accept-new
+          -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
+DEST="$WPU_USER@$WPU_HOST"
+remote() { ssh "${SSH_OPTS[@]}" "$DEST" "$@"; }
+# Files written by WP-CLI as root end up owned by root and break the site: every remote script starts with this
+GUARD='[ "$(id -u)" != 0 ] || { echo "refusing to run as root" >&2; exit 1; }'
+RE_PATH='^/[A-Za-z0-9._/~-]+$'
+json_list() { local out=""; for X in "$@"; do out+="\"$X\","; done; echo "[${out%,}]"; }
+
+if [ "$MODE" = --probe ]; then
+  ERR=$(mktemp); trap 'rm -f "$ERR"' EXIT
+  if ! OUT=$(remote 'echo "uid=$(id -u)"; command -v wp >/dev/null && echo has-wp; { command -v mysqldump || command -v mariadb-dump; } >/dev/null && echo has-dump; command -v rsync >/dev/null && echo has-rsync; true' </dev/null 2>"$ERR"); then
+    if grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED' "$ERR"; then
+      echo "The server's host key has changed. If you rebuilt or reinstalled the server, remove its old key (see README) and try again."
+    elif grep -q 'Permission denied' "$ERR"; then echo 'SSH rejected the key. Add the public key shown in Settings to this server.'
+    else echo "Can't connect over SSH. Check the host, port and user."; fi
+    exit 1
+  fi
+  has() { grep -qx "$1" <<< "$OUT"; }
+  if has uid=0; then echo 'Logged in as root. Use the account that owns the site files instead (see README).'; exit 1; fi
+  has has-wp || { echo 'WP-CLI (wp) is not installed or not in the PATH on the server.'; exit 1; }
+  has has-dump || { echo 'mysqldump is not available on the server.'; exit 1; }
+  [ "$WPU_FULL_BACKUP" != 1 ] || has has-rsync || { echo 'rsync is not available on the server (needed for full backups).'; exit 1; }
+  echo OK
+  exit 0
+fi
+
+if [ "$MODE" = --json ]; then
+  # Looks for wp-load.php: it marks a WordPress root even when wp-config.php sits one folder up.
+  # Hidden folders (.trash, .cache…) are skipped.
+  FOUND=$(remote "find ${WPU_PATH:-~} -maxdepth 5 -name wp-load.php -not -path '*/.*' 2>/dev/null | sed 's|/wp-load.php\$||' | sort" </dev/null) || exit 255
+  SITES=(); SKIPPED=(); TODO=()
+  while IFS= read -r P; do
+    [ -n "$P" ] || continue
+    [[ $P =~ $RE_PATH ]] || { echo "skipping unsupported path: $P" >&2; continue; }
+    SITES+=("$P")
+    if [[ ":$WPU_SKIP:" == *":$P:"* ]]; then SKIPPED+=("$P"); else TODO+=("$P"); fi
+  done <<< "$FOUND"
+  IFS=, read -ra EXCL <<< "$WPU_EXCLUDE"
+  EXCL_JSON=$(json_list "${EXCL[@]}")
+  EXCL_JSON=${EXCL_JSON//\"/\\\"}   # escaped: it goes inside the remote echo's double quotes
+  echo "{\"server\":\"$WPU_SERVER\",\"sites\":$(json_list "${SITES[@]}"),\"skipped\":$(json_list "${SKIPPED[@]}")}"
+
+  N=0
+  for P in "${TODO[@]}"; do
+    ID="$WPU_SERVER:$P"
+    N=$((N+1))
+    echo "===== [$N/${#TODO[@]}] $ID"
+    # One JSON line per site; if the site fails, a line with "error" and on to the next one.
+    # The --format=json values arrive already quoted for JSON.
+    remote "bash -s" <<EOF || echo "{\"site\":\"$ID\",\"error\":\"could not list (no connection or not a WordPress)\"}"
+$GUARD
+set -eo pipefail
+cd $P
+# Clears the update list WordPress keeps in cache: otherwise it can show a stale one
+wp transient delete update_plugins --network --quiet || true
+wp transient delete update_themes --network --quiet || true
+URL=\$(wp option get home --format=json)
+DBN=\$(wp config get DB_NAME --format=json)
+DBH=\$(wp config get DB_HOST --format=json)
+DBP=\$(wp config get table_prefix --format=json)
+WP=\$(wp core version)
+CORE=\$(wp core check-update --force-check --format=json)
+PLUGINS=\$(wp plugin list --update=available --fields=name,status,version,update_version --format=json)
+THEMES=\$(wp theme list --update=available --fields=name,status,version,update_version --format=json)
+echo "{\"site\":\"$ID\",\"url\":\$URL,\"db\":{\"name\":\$DBN,\"host\":\$DBH,\"prefix\":\$DBP},\"wp\":\"\$WP\",\"exclude\":$EXCL_JSON,\"core\":\${CORE:-[]},\"plugins\":\${PLUGINS:-[]},\"themes\":\${THEMES:-[]}}"
+EOF
+  done
+  exit 0
+fi
+
+[ "$MODE" = --apply ] && [ $# -gt 0 ] || { echo "usage: updater.sh --probe | --json | --apply <path>…" >&2; exit 2; }
+
+# rsync takes the ssh command as one string; each option goes single-quoted so paths with spaces work
+RSH=ssh; for O in "${SSH_OPTS[@]}"; do RSH+=" '$O'"; done
 FAILED=()
 N=0
 
-for SITE in "${SITES[@]}"; do
-  REMOTE="domains/$SITE/public_html"
+for P in "$@"; do
+  ID="$WPU_SERVER:$P"
   N=$((N+1))
-  echo "===== [$N/${#SITES[@]}] $SITE"
+  echo "===== [$N/$#] $ID"
+  [[ $P =~ $RE_PATH ]] || { echo "== $ID: unsupported path, not updated"; FAILED+=("$ID (path)"); continue; }
 
-  if [ "$MODE" = json ]; then
-    # One JSON line per site; if the site fails, a line with "error" and on to the next one
-    ssh "${OPTS[@]}" "$HOST" "bash -s" <<EOF || echo "{\"site\":\"$SITE\",\"error\":\"could not list (no connection or not a WordPress)\"}"
-set -eo pipefail
-cd $REMOTE
-wp transient delete update_plugins --network --quiet || true
-wp transient delete update_themes --network --quiet || true
-WP=\$(wp core version)
-C=\$(wp core check-update --force-check --format=json)
-P=\$(wp plugin list --update=available --fields=name,status,version,update_version --format=json)
-T=\$(wp theme list --update=available --fields=name,status,version,update_version --format=json)
-echo "{\"site\":\"$SITE\",\"wp\":\"\$WP\",\"exclude\":[\"${EXCLUDE//,/\",\"}\"],\"core\":\${C:-[]},\"plugins\":\${P:-[]},\"themes\":\${T:-[]}}"
-EOF
-    continue
-  fi
-
-  if [ -z "$MODE" ]; then
-    # Clears the update list WordPress keeps in cache: otherwise it can show a stale one
-    ssh "$HOST" "cd $REMOTE && wp transient delete update_plugins --network --quiet; wp transient delete update_themes --network --quiet; \
-      wp core check-update --force-check \
-      && wp plugin list --update=available --fields=name,status,version,update_version \
-      && wp theme list --update=available --fields=name,status,version,update_version"
-    echo "(left alone: $EXCLUDE)"
-    continue
-  fi
-
-  DIR="$BACKUPS/$SITE"
+  URL=$(remote "$GUARD; cd $P && wp option get home" </dev/null) || URL=""
+  [[ $URL =~ ^https?://[^[:space:]\"]+$ ]] || { echo "== $ID: can't read the site address, not updated"; FAILED+=("$ID (address)"); continue; }
+  # Backup folder named after the address: https://example.com/blog/ → example.com_blog
+  NAME=${URL#*://}; NAME=${NAME//[\/:]/_}
+  while [[ $NAME == *_ ]]; do NAME=${NAME%_}; done
+  DIR="$WPU_BACKUPS/$WPU_USER@$WPU_HOST/$NAME"
   mkdir -p "$DIR"
-  echo "== $SITE: database backup"
-  # wp db export doesn't work on Hostinger: it disables proc_open(). mysqldump is called directly.
-  ssh "$HOST" "bash -s" > "$DIR/database.sql.gz.tmp" <<EOF || { echo "== $SITE: database backup failed, not updated"; FAILED+=("$SITE (backup)"); continue; }
+
+  echo "== $ID: database backup"
+  # wp db export doesn't work on some hosts (Hostinger disables proc_open()): mysqldump is called directly
+  remote "bash -s" > "$DIR/database.sql.gz.tmp" <<EOF || { echo "== $ID: database backup failed, not updated"; FAILED+=("$ID (backup)"); continue; }
+$GUARD
 set -eo pipefail
-cd $REMOTE
+cd $P
+DUMP=\$(command -v mysqldump || command -v mariadb-dump)
 DB_NAME="\$(wp config get DB_NAME)"
 DB_USER="\$(wp config get DB_USER)"
 DB_HOST="\$(wp config get DB_HOST)"
 export MYSQL_PWD="\$(wp config get DB_PASSWORD)"
-mysqldump --single-transaction --no-tablespaces --default-character-set=utf8mb4 \
+"\$DUMP" --single-transaction --no-tablespaces --default-character-set=utf8mb4 \
   -h "\$DB_HOST" -u "\$DB_USER" "\$DB_NAME" | gzip
 EOF
   gzip -dc "$DIR/database.sql.gz.tmp" | tail -1 | grep -q "Dump completed" \
-    || { echo "== $SITE: database backup incomplete, not updated"; FAILED+=("$SITE (backup)"); continue; }
+    || { echo "== $ID: database backup incomplete, not updated"; FAILED+=("$ID (backup)"); continue; }
   # Only the latest one is kept: the previous one is replaced only now that the new one is verified
   mv "$DIR/database.sql.gz.tmp" "$DIR/database.sql.gz"
   # To roll a plugin back: wp plugin install <name> --version=<the one in this file> --force
-  ssh "$HOST" "cd $REMOTE && wp plugin list --fields=name,status,version && wp theme list --fields=name,status,version" \
-    > "$DIR/versions-before.txt"
+  remote "$GUARD; cd $P && wp plugin list --fields=name,status,version && wp theme list --fields=name,status,version" \
+    </dev/null > "$DIR/versions-before.txt" || echo "warning: couldn't save versions-before.txt for $ID" >&2
 
-  echo "== $SITE: updating"
-  ssh "$HOST" "bash -s" <<EOF || { echo "== $SITE: update failed"; FAILED+=("$SITE (update)"); }
+  if [ "$WPU_FULL_BACKUP" = 1 ]; then
+    echo "== $ID: copying files"
+    # The marker stays if the copy fails, so a half copy never looks like a good one.
+    # Plugins' own backup folders are skipped: they aren't needed and can weigh GBs.
+    touch "$DIR/files.incomplete"
+    rsync -az --delete --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups -e "$RSH" "$DEST:$P/" "$DIR/files/" \
+      || { echo "== $ID: file copy failed, not updated"; FAILED+=("$ID (files)"); continue; }
+    rm "$DIR/files.incomplete"
+  fi
+
+  echo "== $ID: updating"
+  remote "bash -s" <<EOF || { echo "== $ID: update failed"; FAILED+=("$ID (update)"); }
+$GUARD
 set -eo pipefail
-cd $REMOTE
+cd $P
 wp core update
 wp core update-db
-wp plugin update --all --exclude=$EXCLUDE
-wp theme update --all
+wp plugin update --all ${WPU_EXCLUDE:+--exclude=$WPU_EXCLUDE}
+wp theme update --all ${WPU_EXCLUDE:+--exclude=$WPU_EXCLUDE}
 wp language core update
 wp language plugin update --all
 wp language theme update --all
@@ -92,8 +156,8 @@ wp cache flush || true
 wp litespeed-purge all || true
 EOF
 
-  CODE=$(curl -sL -o /dev/null -w '%{http_code}' "https://$SITE") || true
-  if [ "$CODE" = 200 ]; then echo "== $SITE: OK"; else echo "== $SITE: site responds $CODE, check it"; FAILED+=("$SITE (site $CODE)"); fi
+  CODE=$(curl -sL --max-time 60 -o /dev/null -w '%{http_code}' "$URL") || true
+  if [ "$CODE" = 200 ]; then echo "== $ID: OK"; else echo "== $ID: site responds $CODE, check it"; FAILED+=("$ID (site $CODE)"); fi
 done
 
 [ ${#FAILED[@]} -eq 0 ] || { echo; echo "Check: ${FAILED[*]}"; exit 1; }
