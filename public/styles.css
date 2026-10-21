@@ -154,11 +154,11 @@ h1 { margin: 0; font-size: 32px; font-weight: 600; line-height: 1.1; letter-spac
 .chevron { width: 16px; height: 16px; fill: var(--dim); transition: transform .15s; }
 .open .chevron { transform: rotate(180deg); }
 
-.details { display: grid; gap: 20px; padding: 4px 20px 22px; }
+.details { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 4px 20px 22px; }
 .details h3 { margin: 0 0 8px; font-size: 13px; font-weight: 500; color: var(--muted); }
 .note { margin: 8px 0 0; color: var(--dim); font-size: 12px; }
 
-.table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.table { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }   /* narrow screens scroll the table, not the page */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { padding: 8px 12px; background: #111; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; font-weight: 400; text-align: left; }
 td { padding: 9px 12px; border-top: 1px solid #1a1a1a; }
@@ -196,6 +196,7 @@ tr.skipped td { color: var(--dim); }
   .actions { width: 100%; }
   .actions .button { flex: 1; }
   .toggle { grid-template-columns: minmax(0, 1fr) auto 16px; }
+  .action { width: auto; }   /* no fixed column: the address gets the room */
 }
 
 @media (prefers-reduced-motion: reduce) {
