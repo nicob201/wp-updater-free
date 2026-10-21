@@ -1,11 +1,9 @@
 // Draws the state the bridge (server.js) sends and asks it to list or update.
-const TOKEN = new URLSearchParams(location.search).get('t') || '';
 const $ = id => document.getElementById(id);
 const opened = new Set();     // expanded rows, by site id
 const rowCache = new Map();   // site id → last HTML drawn (so unchanged rows aren't redrawn)
 let state = null;
 let connected = false;
-let stale = false;            // the tab is from an earlier start of the bridge (old token)
 let needsLog = true;
 let logLines = [];
 
@@ -24,7 +22,7 @@ function ago(ms) {
 async function post(route, body) {
   const r = await fetch(route, {
     method: 'POST',
-    headers: { 'X-Token': TOKEN, 'Content-Type': 'application/json' },
+    headers: { 'X-WPU': '1', 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   }).catch(() => null);
   if (!r) alert('No connection with the local server. Start it again.');
@@ -71,6 +69,7 @@ function rowHTML(s, canUpdate) {
     }
     case 'done': cls = 'st-ok'; text = 'Done'; summary = updated; break;
     case 'review': cls = 'st-err'; text = 'Check'; summary = esc(s.reason); break;
+    case 'duplicate': cls = 'st-err'; text = 'Duplicate'; summary = esc(s.reason); break;
     default: cls = 'st-err'; text = 'Error'; summary = esc(s.reason);
   }
   const failed = s.status === 'review' || s.status === 'error';
@@ -79,7 +78,7 @@ function rowHTML(s, canUpdate) {
     <div class="row">
       <button class="toggle" type="button" aria-expanded="${open}" data-toggle="${esc(s.id)}">
         <span class="name">
-          <span class="domain">${esc(s.id)}</span>
+          <span class="domain">${esc(s.url || s.path)}</span>
           <span class="summary${failed ? ' error' : ''}">${summary}</span>
         </span>
         <span class="site-status ${cls}"><i class="dot"></i>${text}</span>
@@ -120,7 +119,8 @@ function listMessage(text) {
 function drawList(sites, canUpdate) {
   const list = $('sites');
   if (!sites.length) {
-    return listMessage(state.listing ? 'Looking for the sites…' : "Couldn't get the list of sites. Check the SSH connection.");
+    return listMessage(state.listing ? 'Looking for the sites…' : !state.config?.servers.length ? 'No servers yet.'
+      : "Couldn't get the list of sites. Check the SSH connection.");
   }
   // If the set of sites changed everything is rebuilt; otherwise only the rows that changed (keeps focus)
   const order = sites.map(s => s.id).join('|');
@@ -171,19 +171,17 @@ function drawProgress(r) {
 }
 
 function render() {
-  indicator($('srv'), connected, connected ? 'Local server OK' : stale ? 'Old tab' : 'Server stopped');
-  if (stale) {
-    $('check').disabled = $('all').disabled = true;
-    return listMessage('This tab is from an earlier start. Close it and open WP Updater again.');
-  }
+  indicator($('srv'), connected, connected ? 'Local server OK' : 'Server stopped');
   if (!state) return;
   const r = state.run;
   const running = !!r?.active;
-  const sites = Object.values(state.sites).sort((a, b) => a.id.localeCompare(b.id));
+  const sites = Object.values(state.sites).filter(s => s.status !== 'excluded').sort((a, b) => a.id.localeCompare(b.id));
   const pending = sites.filter(s => s.status === 'pending');
-  const canUpdate = connected && !running && !state.listing && state.ssh !== false;
+  const servers = Object.values(state.servers);
+  const ssh = servers.some(v => v.ssh === false) ? false : servers.length && servers.every(v => v.ssh) ? true : null;
+  const canUpdate = connected && !running && !state.listing && ssh !== false;
 
-  indicator($('ssh'), state.ssh, state.ssh === null ? 'Testing SSH…' : state.ssh ? 'SSH connected' : 'SSH disconnected');
+  indicator($('ssh'), ssh, ssh === null ? 'Testing SSH…' : ssh ? 'SSH connected' : 'SSH disconnected');
   $('count').textContent = sites.length ? plural(sites.length, 'site', 'sites') : '';
   $('checked').textContent = state.listing ? 'Checking for updates…' : state.checked ? `Checked ${ago(state.checked)}` : '';
   $('check').disabled = !connected || state.listing || running;
@@ -222,21 +220,15 @@ $('sites').addEventListener('click', e => {
   render();
 });
 
-if (TOKEN) {
-  const source = new EventSource(`/api/events?t=${encodeURIComponent(TOKEN)}`);
-  source.onopen = () => { connected = true; needsLog = true; render(); };
-  source.onerror = () => {
-    connected = false;
-    // CLOSED = the bridge answered but rejected the token: it restarted and this tab is stale
-    stale = source.readyState === EventSource.CLOSED;
-    render();
-  };
-  source.addEventListener('state', e => {
-    state = JSON.parse(e.data);
-    if (needsLog) { logLines = []; addLog(state.log || []); needsLog = false; }
-    render();
-  });
-  source.addEventListener('log', e => addLog([JSON.parse(e.data)]));
-} else listMessage('Open this page from the address WP Updater printed when it started.');
+// The browser reconnects on its own if the bridge restarts
+const source = new EventSource('/api/events');
+source.onopen = () => { connected = true; needsLog = true; render(); };
+source.onerror = () => { connected = false; render(); };
+source.addEventListener('state', e => {
+  state = JSON.parse(e.data);
+  if (needsLog) { logLines = []; addLog(state.log || []); needsLog = false; }
+  render();
+});
+source.addEventListener('log', e => addLog([JSON.parse(e.data)]));
 setInterval(render, 30000);
 render();

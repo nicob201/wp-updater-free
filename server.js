@@ -1,32 +1,62 @@
-// Local bridge between the page (public/) and updater.sh.
-// Listens on 127.0.0.1 only, requires its own Host and, under /api, a token that changes on every start.
+// Local bridge between the page (public/) and updater.sh: settings, live state and runs.
+// Only answers requests addressed to localhost, and POSTs need a header no other website can send.
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const readline = require('node:readline');
 const { StringDecoder } = require('node:string_decoder');
 const { spawn, execFile, execFileSync } = require('node:child_process');
 const S = require('./lib/state');
-const { SITE_ID } = require('./lib/config');
+const C = require('./lib/config');
 
-// The environment variables exist for the tests; normal use doesn't touch them
+// Docker sets WPU_BIND/WPU_DATA/WPU_SSH_DIR; the tests set the rest
 const PORT = Number(process.env.WPU_PORT || 8787);
+const BIND = process.env.WPU_BIND || '127.0.0.1';
+const PUBLIC_PORT = Number(process.env.WPU_PUBLIC_PORT || PORT);   // the port the browser sees (Docker can map another one)
 const SCRIPT = path.resolve(process.env.WPU_SCRIPT || path.join(__dirname, 'updater.sh'));
 const DATA = path.resolve(process.env.WPU_DATA || path.join(__dirname, 'data'));
+const SSH_DIR = path.resolve(process.env.WPU_SSH_DIR || path.join(DATA, 'ssh'));
+const RUNNER = path.join(__dirname, 'lib', 'run.js');
 const PUBLIC = path.join(__dirname, 'public');
-const TOKEN = crypto.randomBytes(32).toString('hex');
-const HOSTS = [`127.0.0.1:${PORT}`, `localhost:${PORT}`];
-const FILES = { '/': ['index.html', 'text/html'], '/styles.css': ['styles.css', 'text/css'], '/app.js': ['app.js', 'text/javascript'] };
+const KEY = path.join(SSH_DIR, 'id_ed25519');
+const CONFIG = path.join(DATA, 'config.json');
 const LOG = path.join(DATA, 'last-run.log');
 const RUNNING = path.join(DATA, 'running.json');   // exists while an update runs
+const PLAN = path.join(DATA, 'run-plan.json');
+const HOSTS = [`127.0.0.1:${PUBLIC_PORT}`, `localhost:${PUBLIC_PORT}`];
+const ORIGINS = HOSTS.map(h => `http://${h}`);
+const URL_SHOWN = `http://localhost:${PUBLIC_PORT}/`;
+const FILES = { '/': ['index.html', 'text/html'], '/styles.css': ['styles.css', 'text/css'], '/app.js': ['app.js', 'text/javascript'] };
 
-fs.mkdirSync(DATA, { recursive: true });
+// A broken config.json stops the start instead of being replaced: it's the user's file
+let config;
+try { config = C.load(CONFIG); } catch (err) { console.error(`Can't start: ${err.message}`); process.exit(1); }
+fs.mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 });
+if (!fs.existsSync(KEY)) execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'wp-updater', '-f', KEY]);
+
 const state = S.newState();
-state.ssh = null;
+state.publicKey = fs.readFileSync(`${KEY}.pub`, 'utf8').trim();
+applyConfig(config);
 const clients = new Set();
-let listing = null;   // listing process in progress
+let listing = [];     // listing processes in progress, one per server
+let listingGen = 0;   // a restarted listing ignores what the killed one still prints
 let reader = null;    // interval that reads the update's log
+
+function applyConfig(c) {
+  config = c;
+  state.config = c;
+  const servers = {};
+  for (const s of c.servers) servers[s.id] = state.servers[s.id] || { ssh: null, message: null };
+  state.servers = servers;
+}
+
+// What updater.sh needs to work on one server
+function envFor(srv) {
+  const skip = config.excludedSites.filter(id => id.startsWith(`${srv.id}:`)).map(id => id.slice(9));
+  return { WPU_SERVER: srv.id, WPU_HOST: srv.host, WPU_PORT: String(srv.port), WPU_USER: srv.user, WPU_PATH: srv.path,
+           WPU_KEY: KEY, WPU_KNOWN_HOSTS: path.join(SSH_DIR, 'known_hosts'), WPU_EXCLUDE: config.exclude.join(','),
+           WPU_SKIP: skip.join(':'), WPU_BACKUPS: path.join(DATA, 'backups'), WPU_FULL_BACKUP: config.fullBackup ? '1' : '' };
+}
 
 // ---- Live events (Server-Sent Events) ----
 
@@ -53,34 +83,65 @@ function events(req, res) {
 
 // ---- Script ----
 
-function list(options) {
-  if (listing || state.run?.active) return false;
-  const proc = spawn(SCRIPT, ['--json'], { cwd: path.dirname(SCRIPT) });
-  listing = proc;
-  S.startListing(state, options);
+// One listing per server, all at once. restart: kill the one in progress (listing only reads, it's safe to cut)
+function list({ clearReview = false, restart = false } = {}) {
+  if (state.run?.active || (listing.length && !restart)) return false;
+  for (const p of listing) try { process.kill(-p.pid); } catch {}
+  const gen = ++listingGen;
+  const mine = () => gen === listingGen;
+  S.startListing(state, { clearReview, servers: config.servers.map(s => s.id) });
   changed();
-  readline.createInterface({ input: proc.stdout }).on('line', l => { S.listingLine(state, l, Date.now()); log(l); changed(); });
-  readline.createInterface({ input: proc.stderr }).on('line', l => { S.note(state, l); log(l); });
-  const finish = code => {
-    if (listing !== proc) return;
-    listing = null;
-    S.endListing(state, Date.now(), code);
-    changed();
-  };
-  proc.on('close', code => finish(code ?? 1));
-  proc.on('error', err => { S.note(state, `Could not run ${SCRIPT}: ${err.message}`); finish(1); });
+  listing = [];
+  let left = config.servers.length, failed = false;
+  if (!left) { S.endListing(state, Date.now(), 0); changed(); return true; }
+
+  for (const srv of config.servers) {
+    const proc = spawn('bash', [SCRIPT, '--json'], { cwd: path.dirname(SCRIPT), detached: true, env: { ...process.env, ...envFor(srv) } });
+    listing.push(proc);
+    readline.createInterface({ input: proc.stdout }).on('line', l => { if (mine()) { S.listingLine(state, l, Date.now()); log(l); changed(); } });
+    readline.createInterface({ input: proc.stderr }).on('line', l => { if (mine()) { S.note(state, l); log(l); } });
+    let closed = false;
+    const finish = code => {
+      if (closed || !mine()) return;
+      closed = true;
+      failed ||= code !== 0;
+      if (--left) return;
+      listing = [];
+      S.endListing(state, Date.now(), failed ? 1 : 0);
+      changed();
+    };
+    proc.on('close', code => finish(code ?? 1));
+    proc.on('error', err => { if (mine()) S.note(state, `Could not run ${SCRIPT}: ${err.message}`); finish(1); });
+  }
   return true;
 }
 
-// The update runs detached from the bridge: if this window closes, it keeps going.
-// The bridge only reads the log it writes.
+function probe(srv, done) {
+  execFile('bash', [SCRIPT, '--probe'], { cwd: path.dirname(SCRIPT), timeout: 20000, env: { ...process.env, ...envFor(srv) } },
+    (err, stdout) => done(!err, err ? (String(stdout).trim() || 'No response') : null));
+}
+
+function probeAll() {
+  for (const srv of config.servers) probe(srv, (ssh, message) => {
+    if (!config.servers.includes(srv)) return;   // settings changed meanwhile: a newer probe is coming
+    const st = state.servers[srv.id];
+    if (st.ssh !== ssh || st.message !== message) { Object.assign(st, { ssh, message }); changed(); }
+  });
+}
+
+// The update runs detached from the bridge (lib/run.js, one server after another): if the bridge stops,
+// it keeps going. The bridge only reads the log it writes.
 function start(ids) {
   const now = Date.now();
   S.startRun(state, ids, now);
+  const groups = config.servers
+    .map(srv => ({ env: envFor(srv), paths: ids.filter(id => id.startsWith(`${srv.id}:`)).map(id => id.slice(9)) }))
+    .filter(g => g.paths.length);
+  fs.writeFileSync(PLAN, JSON.stringify({ script: SCRIPT, groups }));
   fs.writeFileSync(LOG, '');   // emptied before reading: so the previous run's END isn't read again
   // The newline before END puts it on its own line even if the script dies in the middle of one
-  const proc = spawn('sh', ['-c', '"$0" --apply "$@" > "$LOG" 2>&1; c=$?; printf "\\nEND code=%s\\n" "$c" >> "$LOG"', SCRIPT, ...ids],
-    { cwd: path.dirname(SCRIPT), detached: true, stdio: 'ignore', env: { ...process.env, LOG } });
+  const proc = spawn('sh', ['-c', '"$0" "$1" "$2" > "$LOG" 2>&1; c=$?; printf "\\nEND code=%s\\n" "$c" >> "$LOG"', process.execPath, RUNNER, PLAN],
+    { cwd: __dirname, detached: true, stdio: 'ignore', env: { ...process.env, LOG } });
   proc.unref();
   fs.writeFileSync(RUNNING, JSON.stringify({ pid: proc.pid, sites: ids, start: now }));
   readLog();
@@ -119,10 +180,13 @@ function finishRun() {
   list();   // to confirm they ended up up to date
 }
 
-// Is that pid still our run? After a reboot, that number may belong to another process
+// Is that pid still our run? After a reboot (or a container restart) that number may belong to another process
 function isOurs(pid) {
-  try { return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).includes(SCRIPT); }
-  catch { return false; }
+  try {
+    const proc = `/proc/${pid}/cmdline`;   // Linux / Docker, where `ps` may not exist
+    const cmd = fs.existsSync(proc) ? fs.readFileSync(proc, 'utf8') : execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
+    return cmd.includes(RUNNER);
+  } catch { return false; }
 }
 
 // On start: if an update was left over, pick it up again. Returns true if it already took care of the listing.
@@ -147,38 +211,54 @@ function recover() {
   return false;
 }
 
-function update(req, res) {
-  let body = '';
-  req.on('data', d => { body += d; if (body.length > 100000) req.destroy(); });
-  req.on('end', () => {
-    let ids;
-    try { ids = JSON.parse(body).sites; } catch { return reply(res, 400); }
-    if (state.run?.active || listing) return reply(res, 409);
-    const valid = d => typeof d === 'string' && SITE_ID.test(d) && state.sites[d]?.pending.length > 0
-      && ['pending', 'review'].includes(state.sites[d].status);
-    if (!Array.isArray(ids) || !ids.length || !ids.every(valid)) return reply(res, 400);
-    start([...new Set(ids)]);
-    reply(res, 202);
-  });
+// ---- API ----
+
+function update(res, body) {
+  if (state.run?.active || listing.length) return reply(res, 409);
+  const ids = body?.sites;
+  const valid = id => typeof id === 'string' && C.SITE_ID.test(id) && config.servers.some(s => s.id === id.slice(0, 8))
+    && state.sites[id]?.pending.length > 0 && ['pending', 'review'].includes(state.sites[id].status);
+  if (!Array.isArray(ids) || !ids.length || !ids.every(valid)) return reply(res, 400);
+  start([...new Set(ids)]);
+  reply(res, 202);
 }
 
-function probeSSH() {
-  execFile(SCRIPT, ['--probe'], { cwd: path.dirname(SCRIPT), timeout: 20000 }, err => {
-    if (state.ssh !== !err) { state.ssh = !err; changed(); }
-  });
+function saveConfig(res, body) {
+  if (state.run?.active) return json(res, 409, { error: 'An update is running. Try again when it finishes.' });
+  let next;
+  try { next = C.validate(body); } catch (err) { return json(res, 400, { error: err.message }); }
+  C.save(CONFIG, next);
+  applyConfig(next);
+  list({ clearReview: true, restart: true });
+  probeAll();
+  changed();
+  json(res, 200, { config: next });
+}
+
+function testServer(res, body) {
+  let srv;
+  try { [srv] = C.validate({ servers: [{ ...body, name: 'test', id: '00000000' }] }).servers; }
+  catch (err) { return json(res, 400, { error: err.message }); }
+  probe(srv, (ok, message) => json(res, 200, { ok, message: ok ? 'OK' : message }));
 }
 
 // ---- HTTP ----
 
 function reply(res, code) { res.writeHead(code, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(String(code)); }
+function json(res, code, data) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); }
 
-function tokenOk(t) {
-  const a = Buffer.from(String(t ?? '')), b = Buffer.from(TOKEN);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+function withBody(req, res, handle) {
+  let body = '';
+  req.on('data', d => { body += d; if (body.length > 100000) req.destroy(); });
+  req.on('end', () => {
+    let data;
+    try { data = JSON.parse(body); } catch { return reply(res, 400); }
+    handle(res, data);
+  });
 }
 
 const server = http.createServer((req, res) => {
-  if (!HOSTS.includes(req.headers.host)) return reply(res, 403);   // stops another website from talking to localhost
+  if (!HOSTS.includes(req.headers.host)) return reply(res, 403);   // stops DNS rebinding: other websites can't talk to localhost
   const url = new URL(req.url, 'http://local');
 
   if (!url.pathname.startsWith('/api/')) {
@@ -191,32 +271,26 @@ const server = http.createServer((req, res) => {
     });
   }
 
-  if (!tokenOk(req.method === 'GET' ? url.searchParams.get('t') : req.headers['x-token'])) return reply(res, 403);
   if (req.method === 'GET' && url.pathname === '/api/events') return events(req, res);
-  if (req.method === 'POST' && url.pathname === '/api/list') return reply(res, list({ clearReview: true }) ? 202 : 409);
-  if (req.method === 'POST' && url.pathname === '/api/update') return update(req, res);
+  // A form on another website can't add a custom header without CORS, and CORS is never enabled here
+  if (req.method !== 'POST' || req.headers['x-wpu'] !== '1' || (req.headers.origin && !ORIGINS.includes(req.headers.origin)))
+    return reply(res, 403);
+  if (url.pathname === '/api/list') return reply(res, list({ clearReview: true }) ? 202 : 409);
+  if (url.pathname === '/api/update') return withBody(req, res, update);
+  if (url.pathname === '/api/config') return withBody(req, res, saveConfig);
+  if (url.pathname === '/api/test') return withBody(req, res, testServer);
   reply(res, 404);
 });
 
-// Started again while the bridge is already running: open the running one's page and exit
 server.on('error', err => {
   if (err.code !== 'EADDRINUSE') throw err;
-  let token = '';
-  try { token = fs.readFileSync(path.join(DATA, '.token'), 'utf8').trim(); } catch {}
-  console.log('WP Updater is already running.');
-  if (process.env.WPU_NO_OPEN) process.exit(0);
-  execFile('open', [`http://127.0.0.1:${PORT}/?t=${token}`], () => process.exit(0));
+  console.log(`WP Updater is already running: ${URL_SHOWN}`);
+  process.exit(0);
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  const tokenFile = path.join(DATA, '.token');
-  fs.writeFileSync(tokenFile, TOKEN, { mode: 0o600 });
-  fs.chmodSync(tokenFile, 0o600);
-  const url = `http://127.0.0.1:${PORT}/?t=${TOKEN}`;
-  console.log(`WP Updater: ${url}`);
-  console.log('Close this window to stop it. An update in progress keeps going.');
-  probeSSH();
-  setInterval(probeSSH, 60000);
+server.listen(PORT, BIND, () => {
+  console.log(`WP Updater: ${URL_SHOWN}`);
+  probeAll();
+  setInterval(probeAll, 60000);
   if (!recover()) list();
-  if (!process.env.WPU_NO_OPEN) execFile('open', [url]);
 });
