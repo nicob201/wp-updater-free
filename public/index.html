@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>WP Updater</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000'/%3E%3Cpath d='M23 12a8 8 0 0 0-14-2M9 20a8 8 0 0 0 14 2M9 6v4h4M23 26v-4h-4' fill='none' stroke='%23fff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-inner">
+    <span class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6.5 6.5 0 0 0-11.5-1.5M6 15a6.5 6.5 0 0 0 11.5 1.5M6 4v3.5h3.5M18 20v-3.5h-3.5"/></svg>
+      WP Updater
+    </span>
+    <div class="system">
+      <span id="srv" class="indicator"><i class="dot"></i><span>Connecting…</span></span>
+      <span id="ssh" class="indicator"><i class="dot"></i><span>Testing SSH…</span></span>
+    </div>
+  </div>
+</nav>
+
+<main class="page">
+  <header class="header">
+    <div>
+      <h1>Sites</h1>
+      <p class="sub"><span id="count"></span><span id="checked"></span></p>
+    </div>
+    <div class="actions">
+      <button id="check" class="button secondary" type="button" disabled>Check for updates</button>
+      <button id="all" class="button primary" type="button" disabled>Update all</button>
+    </div>
+  </header>
+
+  <p id="notice" class="notice" hidden>The last update stopped before finishing. Check the log.</p>
+
+  <section id="progress" class="progress" hidden aria-live="polite">
+    <div class="progress-text">
+      <p><strong id="progress-title"></strong> <span id="progress-detail" class="muted"></span></p>
+      <span id="progress-left" class="mono muted"></span>
+    </div>
+    <div class="bar"><i id="progress-bar"></i></div>
+  </section>
+
+  <section id="sites" class="list" aria-label="Sites"></section>
+
+  <details id="log" class="log">
+    <summary>Live log</summary>
+    <pre id="log-text"></pre>
+  </details>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
