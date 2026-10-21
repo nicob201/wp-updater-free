@@ -1,16 +1,41 @@
-// Draws the state the bridge (server.js) sends and asks it to list or update.
+// Draws the state the bridge (server.js) sends, in two views: Sites (#) and Settings (#settings).
 const $ = id => document.getElementById(id);
-const opened = new Set();     // expanded rows, by site id
-const rowCache = new Map();   // site id → last HTML drawn (so unchanged rows aren't redrawn)
+const opened = new Set();   // expanded rows, by site id
+let drawn = new WeakMap();  // element → last HTML drawn (so unchanged parts aren't redrawn and keep focus)
 let state = null;
 let connected = false;
 let needsLog = true;
 let logLines = [];
+let editing = null;         // id of the server in the form; null for a new one
+let saving = Promise.resolve();
+
+// Same patterns as lib/config.js, for instant feedback: the bridge checks everything again
+const RE_HOST = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
+const RE_USER = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$/;
+const RE_SLUG = /^[a-z0-9][a-z0-9._-]{0,99}$/;
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const TYPES = { core: 'Core', plugin: 'Plugin', theme: 'Theme' };
 const CHEVRON = '<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
+const OFFLINE = 'No connection with the local server. Start it again.';
+const ONBOARDING = `
+  <div class="list onboarding">
+    <h2>Connect your first server</h2>
+    <ol class="steps">
+      <li><strong>Copy your SSH key and add it to your server</strong>
+        <span>Settings shows the key. Add it to the SSH keys of the account that owns your sites.</span></li>
+      <li><strong>Add the server</strong>
+        <span>Its host, port and that account's user. Test the connection, then save.</span></li>
+    </ol>
+    <a class="button primary" href="#settings">Open Settings</a>
+  </div>`;
+
+function setHTML(el, html) {
+  if (drawn.get(el) === html) return;
+  drawn.set(el, html);
+  el.innerHTML = html;
+}
 
 function ago(ms) {
   const min = Math.floor((Date.now() - ms) / 60000);
@@ -19,23 +44,51 @@ function ago(ms) {
   return `${Math.floor(min / 60)} h ago`;
 }
 
-async function post(route, body) {
-  const r = await fetch(route, {
-    method: 'POST',
-    headers: { 'X-WPU': '1', 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  }).catch(() => null);
-  if (!r) alert('No connection with the local server. Start it again.');
+// The bridge refuses POSTs without X-WPU: no other website can add that header
+const post = (route, body) => fetch(route, {
+  method: 'POST',
+  headers: { 'X-WPU': '1', 'Content-Type': 'application/json' },
+  body: body ? JSON.stringify(body) : undefined,
+}).catch(() => null);
+
+async function act(route, body) {
+  const r = await post(route, body);
+  if (!r) alert(OFFLINE);
   else if (r.status === 409) alert('A check or an update is already running. Wait for it to finish.');
   else if (r.status === 400) alert('That site has nothing pending anymore. Click "Check for updates" and try again.');
   else if (!r.ok) alert(`The local server answered ${r.status}.`);
 }
 
-function update(ids, question) {
-  if (confirm(question)) post('/api/update', { sites: ids });
+// Settings calls: the bridge's answer, or { error } with a message to show
+async function ask(route, body) {
+  const r = await post(route, body);
+  if (!r) return { error: OFFLINE };
+  const data = await r.json().catch(() => ({}));
+  return r.ok ? data : { error: data.error || `The local server answered ${r.status}.` };
 }
 
-// ---- Drawing ----
+// Every change sends the whole config. Changes run one after another, each on top of what the
+// previous one saved, so two quick clicks can't undo each other. Resolves to true if it was saved.
+function save(change, errorEl) {
+  saving = saving.then(async () => {
+    errorEl.textContent = '';
+    const r = await ask('/api/config', change(structuredClone(state.config)));
+    if (r.error) { errorEl.textContent = r.error; drawn = new WeakMap(); }   // redrawn: controls go back to the saved config
+    else state.config = r.config;
+    render();
+    return !r.error;
+  });
+  return saving;
+}
+
+function update(ids, question) {
+  if (confirm(question)) act('/api/update', { sites: ids });
+}
+
+const sshOk = s => state.servers[s.server]?.ssh !== false;
+const updatable = () => Object.values(state.sites).filter(s => s.status === 'pending' && sshOk(s));
+
+// ---- Sites view ----
 
 function indicator(el, ok, text) {
   el.classList.toggle('ok', ok === true);
@@ -43,11 +96,18 @@ function indicator(el, ok, text) {
   el.lastElementChild.textContent = text;
 }
 
+function sshHTML(st) {
+  const [cls, text] = st.ssh === true ? ['ok', 'SSH OK'] : st.ssh === false ? ['bad', 'SSH failed'] : ['', 'Testing SSH…'];
+  return `<span class="indicator ${cls}"><i class="dot"></i><span>${text}</span></span>`;
+}
+
 // Short summary under the site name: what will be updated
 function names(items) {
   const n = items.map(i => i.name);
   return n.length > 3 ? `${n.slice(0, 3).join(', ')} +${n.length - 3}` : n.join(', ');
 }
+
+const STEPS = { backup: 'backing up the database', files: 'copying files' };
 
 function rowHTML(s, canUpdate) {
   const open = opened.has(s.id);
@@ -62,7 +122,7 @@ function rowHTML(s, canUpdate) {
       break;
     case 'queued': cls = 'st-gray'; text = 'Queued'; summary = 'Waiting for its turn'; break;
     case 'updating': {
-      const what = s.downloading || (s.step === 'backup' ? 'backing up the database' : 'preparing');
+      const what = s.downloading || STEPS[s.step] || 'preparing';
       cls = 'st-run'; text = 'Updating';
       summary = `<span class="bar mini"><i style="width:${Math.round(s.progress * 100)}%"></i></span>${esc(what)}`;
       break;
@@ -72,7 +132,7 @@ function rowHTML(s, canUpdate) {
     case 'duplicate': cls = 'st-err'; text = 'Duplicate'; summary = esc(s.reason); break;
     default: cls = 'st-err'; text = 'Error'; summary = esc(s.reason);
   }
-  const failed = s.status === 'review' || s.status === 'error';
+  const failed = ['review', 'error', 'duplicate'].includes(s.status);
   const can = canUpdate && s.pending.length > 0 && (s.status === 'pending' || s.status === 'review');
   return `
     <div class="row">
@@ -110,32 +170,41 @@ function detailsHTML(s) {
   return parts.join('');
 }
 
-function listMessage(text) {
-  rowCache.clear();
-  delete $('sites').dataset.order;
-  $('sites').innerHTML = `<p class="empty">${text}</p>`;
+function groupHeadHTML(srv, st) {
+  return `
+    <span class="group-name"><strong>${esc(srv.name)}</strong><span class="mono muted">${esc(`${srv.user}@${srv.host}`)}</span></span>
+    ${sshHTML(st)}
+    ${st.ssh === false && st.message ? `<p class="group-error">${esc(st.message)}</p>` : ''}`;
 }
 
+// One card per server, in the order of the settings
 function drawList(sites, canUpdate) {
   const list = $('sites');
-  if (!sites.length) {
-    return listMessage(state.listing ? 'Looking for the sites…' : !state.config?.servers.length ? 'No servers yet.'
-      : "Couldn't get the list of sites. Check the SSH connection.");
-  }
-  // If the set of sites changed everything is rebuilt; otherwise only the rows that changed (keeps focus)
-  const order = sites.map(s => s.id).join('|');
+  const groups = state.config.servers.map(srv =>
+    ({ srv, sites: sites.filter(s => s.server === srv.id).sort((a, b) => a.id.localeCompare(b.id)) }));
+  // If the set of servers or sites changed everything is rebuilt; otherwise only what changed (keeps focus)
+  const order = groups.length ? groups.map(g => [g.srv.id, ...g.sites.map(s => s.id)].join(' ')).join('|') : 'none';
   if (list.dataset.order !== order) {
     list.dataset.order = order;
-    list.innerHTML = sites.map(s => `<article class="site" data-site="${esc(s.id)}"></article>`).join('');
-    rowCache.clear();
+    list.innerHTML = groups.length ? groups.map(g => `
+      <section class="list group" data-server="${g.srv.id}">
+        <header class="group-head"></header>
+        ${g.sites.length ? g.sites.map(s => `<article class="site" data-site="${esc(s.id)}"></article>`).join('') : '<p class="empty"></p>'}
+      </section>`).join('') : ONBOARDING;
   }
-  for (const s of sites) {
-    const html = rowHTML(s, canUpdate);
-    if (rowCache.get(s.id) === html) continue;
-    rowCache.set(s.id, html);
-    const art = list.querySelector(`[data-site="${CSS.escape(s.id)}"]`);
-    art.classList.toggle('open', opened.has(s.id));
-    art.innerHTML = html;
+  for (const g of groups) {
+    const box = list.querySelector(`[data-server="${g.srv.id}"]`);
+    const st = state.servers[g.srv.id] || {};
+    setHTML(box.querySelector('.group-head'), groupHeadHTML(g.srv, st));
+    if (!g.sites.length) {
+      box.querySelector('.empty').textContent = state.listing ? 'Looking for the sites…'
+        : st.ssh === false ? "Couldn't connect to this server." : 'No WordPress sites found';
+    }
+    for (const s of g.sites) {
+      const art = box.querySelector(`[data-site="${CSS.escape(s.id)}"]`);
+      art.classList.toggle('open', opened.has(s.id));
+      setHTML(art, rowHTML(s, canUpdate && st.ssh !== false));
+    }
   }
 }
 
@@ -152,7 +221,7 @@ function drawProgress(r) {
 
   if (r.active) {
     $('progress-title').textContent = r.n ? `Updating ${r.n} of ${total}` : 'Preparing the update…';
-    $('progress-detail').textContent = r.current ? `now: ${r.current}` : '';
+    $('progress-detail').textContent = r.current ? `now: ${current?.url || r.current}` : '';
     const partial = r.n ? (r.n - 1 + (current?.progress || 0)) / total : 0;
     $('progress-bar').style.width = `${Math.max(2, Math.round(partial * 100))}%`;
     if (r.durations.length) {
@@ -170,26 +239,121 @@ function drawProgress(r) {
   }
 }
 
-function render() {
-  indicator($('srv'), connected, connected ? 'Local server OK' : 'Server stopped');
-  if (!state) return;
+function renderSites() {
   const r = state.run;
   const running = !!r?.active;
-  const sites = Object.values(state.sites).filter(s => s.status !== 'excluded').sort((a, b) => a.id.localeCompare(b.id));
-  const pending = sites.filter(s => s.status === 'pending');
-  const servers = Object.values(state.servers);
-  const ssh = servers.some(v => v.ssh === false) ? false : servers.length && servers.every(v => v.ssh) ? true : null;
-  const canUpdate = connected && !running && !state.listing && ssh !== false;
+  const sites = Object.values(state.sites).filter(s => s.status !== 'excluded');
+  const canUpdate = connected && !running && !state.listing;
+  const excluded = state.config.excludedSites.length;
 
-  indicator($('ssh'), ssh, ssh === null ? 'Testing SSH…' : ssh ? 'SSH connected' : 'SSH disconnected');
   $('count').textContent = sites.length ? plural(sites.length, 'site', 'sites') : '';
   $('checked').textContent = state.listing ? 'Checking for updates…' : state.checked ? `Checked ${ago(state.checked)}` : '';
-  $('check').disabled = !connected || state.listing || running;
-  $('all').disabled = !canUpdate || !pending.length;
-  document.title = running && r.n ? `(${r.n}/${r.sites.length}) WP Updater` : 'WP Updater';
+  $('check').disabled = !connected || state.listing || running || !state.config.servers.length;
+  $('all').disabled = !canUpdate || !updatable().length;
+  $('excluded').hidden = !excluded;
+  $('excluded').firstElementChild.textContent = `${plural(excluded, 'site', 'sites')} excluded`;
 
   drawProgress(r);
   drawList(sites, canUpdate);
+}
+
+// ---- Settings view ----
+
+function serverListHTML(c) {
+  if (!c.servers.length) return '<p class="help">No servers yet.</p>';
+  return c.servers.map(s => `
+    <div class="item">
+      <span class="item-main"><strong>${esc(s.name)}</strong>
+        <span class="mono muted">${esc(`${s.user}@${s.host}:${s.port}`)} · ${esc(s.path || 'Home folder')}</span></span>
+      ${sshHTML(state.servers[s.id] || {})}
+      <span class="item-actions">
+        <button class="button secondary small" type="button" data-edit="${s.id}" aria-label="Edit ${esc(s.name)}">Edit</button>
+        <button class="button secondary small" type="button" data-delete="${s.id}" aria-label="Delete ${esc(s.name)}">Delete</button>
+      </span>
+    </div>`).join('');
+}
+
+function chipsHTML(c) {
+  if (!c.exclude.length) return '<p class="help">Nothing excluded yet.</p>';
+  return c.exclude.map(slug =>
+    `<span class="chip">${esc(slug)}<button type="button" data-unexclude="${esc(slug)}" aria-label="Remove ${esc(slug)}">×</button></span>`).join('');
+}
+
+// Every site found on each server, excluded ones included (a site excluded before this listing has no url yet)
+function excludedSitesHTML(c) {
+  if (!c.servers.length) return '<p class="help">Add a server first.</p>';
+  const ids = [...new Set([...Object.keys(state.sites), ...c.excludedSites])].sort();
+  return c.servers.map(srv => {
+    const rows = ids.filter(id => id.startsWith(`${srv.id}:`)).map(id => {
+      const url = state.sites[id]?.url, path = id.slice(9);
+      return `
+        <label class="item">
+          <span class="item-main"><span class="domain">${esc(url || path)}</span>${url ? `<span class="mono muted">${esc(path)}</span>` : ''}</span>
+          <span class="check"><input type="checkbox" data-exclude-site="${esc(id)}"${c.excludedSites.includes(id) ? ' checked' : ''}> Exclude</span>
+        </label>`;
+    }).join('');
+    return `<div class="site-group"><h3>${esc(srv.name)}</h3>${rows || `<p class="help">${state.listing ? 'Looking for the sites…' : 'No sites found.'}</p>`}</div>`;
+  }).join('');
+}
+
+function renderSettings() {
+  const locked = !!state?.run?.active;
+  $('locked').hidden = !locked;
+  $('settings-fields').disabled = locked || !connected || !state;
+  if (!state) return;
+  const c = state.config;
+  if ($('key').value !== state.publicKey) $('key').value = state.publicKey;
+  setHTML($('server-list'), serverListHTML(c));
+  setHTML($('chips'), chipsHTML(c));
+  setHTML($('excluded-sites'), excludedSitesHTML(c));
+  $('full-backup').checked = c.fullBackup;
+}
+
+function formServer() {
+  const f = $('server-form').elements;
+  return { name: f.name.value.trim(), host: f.host.value.trim(), port: f.port.value.trim(), user: f.user.value.trim(), path: f.path.value.trim() };
+}
+
+function serverProblem(s) {
+  if (!s.name) return 'Give the server a name.';
+  if (!RE_HOST.test(s.host)) return 'Invalid host: use a name like example.com or an IP address.';
+  if (!/^\d+$/.test(s.port) || s.port < 1 || s.port > 65535) return 'Invalid port (1-65535).';
+  if (!RE_USER.test(s.user)) return 'Invalid user: letters, numbers, ".", "_" and "-" only.';
+  return '';
+}
+
+function openForm(srv) {
+  const form = $('server-form');
+  editing = srv?.id ?? null;
+  form.reset();
+  if (srv) for (const k of ['name', 'host', 'port', 'user', 'path']) form.elements[k].value = srv[k];
+  $('form-title').textContent = srv ? `Edit ${srv.name}` : 'Add server';
+  $('form-error').textContent = $('test-result').textContent = '';
+  form.hidden = false;
+  $('add-server').hidden = true;
+  form.elements.name.focus();
+}
+
+function closeForm() {
+  $('server-form').hidden = true;
+  $('add-server').hidden = false;
+  editing = null;
+}
+
+// ---- Both views ----
+
+function render() {
+  indicator($('srv'), connected, connected ? 'Local server OK' : 'Server stopped');
+  const settings = location.hash === '#settings';
+  $('view-sites').hidden = settings;
+  $('view-settings').hidden = !settings;
+  for (const [el, on] of [[$('to-sites'), !settings], [$('to-settings'), settings]])
+    on ? el.setAttribute('aria-current', 'page') : el.removeAttribute('aria-current');
+  renderSettings();
+  if (!state) return;
+  const r = state.run;
+  document.title = r?.active && r.n ? `(${r.n}/${r.sites.length}) WP Updater` : 'WP Updater';
+  renderSites();
 }
 
 // ---- Live log ----
@@ -204,20 +368,94 @@ function addLog(lines) {
 
 // ---- Events ----
 
-$('check').addEventListener('click', () => post('/api/list'));
+window.addEventListener('hashchange', () => { scrollTo(0, 0); render(); });
+
+$('check').addEventListener('click', () => act('/api/list'));
 $('all').addEventListener('click', () => {
-  const ids = Object.values(state.sites).filter(s => s.status === 'pending').map(s => s.id);
+  const ids = updatable().map(s => s.id);
   update(ids, ids.length === 1 ? 'Update 1 site?' : `Update ${ids.length} sites?`);
 });
 $('sites').addEventListener('click', e => {
   const button = e.target.closest('[data-update]');
-  if (button) return update([button.dataset.update], `Update ${button.dataset.update}?`);
+  if (button) {
+    const s = state.sites[button.dataset.update];
+    return update([s.id], `Update ${s.url || s.path}?`);
+  }
   const row = e.target.closest('[data-toggle]');
   if (!row) return;
   const id = row.dataset.toggle;
   opened.has(id) ? opened.delete(id) : opened.add(id);
-  rowCache.delete(id);
   render();
+});
+
+$('copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(state.publicKey).then(() => {
+    $('copy').textContent = 'Copied';
+    setTimeout(() => { $('copy').textContent = 'Copy'; }, 2000);
+  }, () => $('key').select());   // no clipboard access: leave it selected to copy by hand
+});
+
+$('add-server').addEventListener('click', () => openForm(null));
+$('cancel').addEventListener('click', closeForm);
+$('server-form').addEventListener('input', () => { $('form-error').textContent = $('test-result').textContent = ''; });
+$('server-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const s = { ...formServer(), id: editing ?? undefined };
+  const problem = serverProblem(s);
+  $('form-error').textContent = problem;
+  if (problem) return;
+  const ok = await save(c => {
+    const srv = { ...s, port: Number(s.port) };
+    c.servers = s.id ? c.servers.map(o => (o.id === s.id ? srv : o)) : [...c.servers, srv];
+    return c;
+  }, $('form-error'));
+  if (ok) closeForm();
+});
+$('test').addEventListener('click', async () => {
+  const s = formServer();
+  const out = $('test-result');
+  const problem = serverProblem({ ...s, name: 'test' });
+  $('form-error').textContent = problem;
+  out.className = 'test-result';
+  out.textContent = problem ? '' : 'Testing…';
+  if (problem) return;
+  const r = await ask('/api/test', { host: s.host, port: Number(s.port), user: s.user, path: s.path });
+  out.textContent = r.error || r.message;
+  out.classList.add(r.ok ? 'ok' : 'bad');
+});
+$('server-list').addEventListener('click', e => {
+  const edit = e.target.closest('[data-edit]');
+  const del = e.target.closest('[data-delete]');
+  if (edit) openForm(state.config.servers.find(s => s.id === edit.dataset.edit));
+  if (!del) return;
+  const srv = state.config.servers.find(s => s.id === del.dataset.delete);
+  if (!confirm(`Delete the server "${srv.name}"? Nothing changes on the server itself.`)) return;
+  if (editing === srv.id) closeForm();
+  save(c => ({ ...c, servers: c.servers.filter(s => s.id !== srv.id) }), $('server-error'));
+});
+
+$('exclude-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input = $('exclude-input');
+  const slug = input.value.trim().toLowerCase();
+  if (!slug) return;
+  if (!RE_SLUG.test(slug)) {
+    $('exclude-error').textContent = `"${slug}" is not a valid plugin or theme name (use its slug, e.g. elementor-pro).`;
+    return;
+  }
+  if (await save(c => ({ ...c, exclude: [...c.exclude, slug] }), $('exclude-error'))) input.value = '';
+});
+$('chips').addEventListener('click', e => {
+  const slug = e.target.closest('[data-unexclude]')?.dataset.unexclude;
+  if (slug) save(c => ({ ...c, exclude: c.exclude.filter(x => x !== slug) }), $('exclude-error'));
+});
+$('excluded-sites').addEventListener('change', e => {
+  const id = e.target.dataset.excludeSite, on = e.target.checked;
+  if (id) save(c => ({ ...c, excludedSites: on ? [...c.excludedSites, id] : c.excludedSites.filter(x => x !== id) }), $('sites-error'));
+});
+$('full-backup').addEventListener('change', e => {
+  const on = e.target.checked;
+  save(c => ({ ...c, fullBackup: on }), $('backup-error'));
 });
 
 // The browser reconnects on its own if the bridge restarts
