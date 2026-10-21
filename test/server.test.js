@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
+const [A, B, C] = ['a', 'b', 'c'].map(p => `aaaaaaaa:/sites/${p}`);
 const procs = [];
 const dirs = new Set();
 
@@ -84,7 +85,7 @@ test('rejects a foreign Host, a missing token and a wrong token', async () => {
 test('lists on start and reports SSH', async () => {
   const s = await start();
   const e = await waitState(s, e => e.checked !== null);
-  assert.equal(e.ssh, true); assert.equal(e.sites['a.test'].status, 'pending'); assert.equal(e.sites['b.test'].status, 'up-to-date');
+  assert.equal(e.ssh, true); assert.equal(e.sites[A].status, 'pending'); assert.equal(e.sites[B].status, 'up-to-date');
 });
 
 test('listing twice at once → 409', async () => {
@@ -100,15 +101,15 @@ test('without SSH: ssh=false and sites become errors, none left checking', async
 
 test('updates, ends done and lists again', async () => {
   const s = await start(); await waitState(s, e => e.checked !== null);
-  assert.equal((await s.post('/api/update', { sites: ['a.test'] })).status, 202);
+  assert.equal((await s.post('/api/update', { sites: [A] })).status, 202);
   const e = await waitState(s, e => e.run?.code === 0 && !e.listing && e.checked > e.run.start);
-  assert.equal(e.sites['a.test'].result.length, 1);   // the listing afterwards doesn't erase it
+  assert.equal(e.sites[A].result.length, 1);   // the listing afterwards doesn't erase it
   assert.ok(!fs.existsSync(path.join(s.dir, 'running.json')));
 });
 
 test('validates sites', async () => {
   const s = await start(); await waitState(s, e => e.checked !== null);
-  for (const d of [[], ['evil.com'], ['a.test; rm -rf ~'], ['b.test'], 'a.test'])
+  for (const d of [[], ['evil.com'], ['aaaaaaaa:/sites/a; rm -rf ~'], [B], 'a.test'])
     assert.equal((await s.post('/api/update', { sites: d })).status, 400, JSON.stringify(d));
   const r = await fetch(s.base + '/api/update', { method: 'POST', headers: { 'X-Token': s.token }, body: 'not json' });
   assert.equal(r.status, 400);
@@ -116,33 +117,33 @@ test('validates sites', async () => {
 
 test('double click → a single run', async () => {
   const s = await start({ FAKE_SLOW: '1' }); await waitState(s, e => e.checked !== null, 20000);
-  const [r1, r2] = await Promise.all([s.post('/api/update', { sites: ['a.test'] }), s.post('/api/update', { sites: ['a.test'] })]);
+  const [r1, r2] = await Promise.all([s.post('/api/update', { sites: [A] }), s.post('/api/update', { sites: [A] })]);
   assert.deepEqual([r1.status, r2.status].sort(), [202, 409]);
 });
 
 test('reloading the page mid-run brings the real state', async () => {
   const s = await start({ FAKE_SLOW: '1' }); await waitState(s, e => e.checked !== null, 20000);
-  await s.post('/api/update', { sites: ['a.test'] });
-  const e = await waitState(s, e => e.run?.current === 'a.test');   // new SSE connection
-  assert.equal(e.run.active, true); assert.equal(e.sites['a.test'].status, 'updating');
+  await s.post('/api/update', { sites: [A] });
+  const e = await waitState(s, e => e.run?.current === A);   // new SSE connection
+  assert.equal(e.run.active, true); assert.equal(e.sites[A].status, 'updating');
 });
 
 test('killing the bridge does not stop the update, and it reattaches on return', async () => {
   const s = await start({ FAKE_SLOW: '1' }); await waitState(s, e => e.checked !== null, 20000);
-  await s.post('/api/update', { sites: ['a.test'] });
-  await waitState(s, e => e.run?.current === 'a.test');
+  await s.post('/api/update', { sites: [A] });
+  await waitState(s, e => e.run?.current === A);
   const { pid } = JSON.parse(fs.readFileSync(path.join(s.dir, 'running.json')));
   s.proc.kill('SIGKILL');
   assert.doesNotThrow(() => process.kill(pid, 0));   // the run is still alive
   const s2 = await start({ WPU_DATA: s.dir, WPU_PORT: s.port, FAKE_SLOW: '1' });
   const e = await waitState(s2, e => e.run?.code === 0, 20000);
-  assert.equal(e.sites['a.test'].result.length, 1);
+  assert.equal(e.sites[A].result.length, 1);
 });
 
 test('a dead run without END → interrupted', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-'));
-  fs.writeFileSync(path.join(dir, 'running.json'), JSON.stringify({ pid: 999999, sites: ['a.test'], start: 1 }));
-  fs.writeFileSync(path.join(dir, 'last-run.log'), '===== [1/1] a.test\n== a.test: updating\n');
+  fs.writeFileSync(path.join(dir, 'running.json'), JSON.stringify({ pid: 999999, sites: [A], start: 1 }));
+  fs.writeFileSync(path.join(dir, 'last-run.log'), `===== [1/1] ${A}\n== ${A}: updating\n`);
   const s = await start({ WPU_DATA: dir });
   const e = await waitState(s, e => e.run !== null);
   assert.equal(e.run.interrupted, true); assert.ok(!fs.existsSync(path.join(dir, 'running.json')));
@@ -151,7 +152,7 @@ test('a dead run without END → interrupted', async () => {
 test('a relative WPU_SCRIPT works too', async () => {
   const s = await start({ WPU_SCRIPT: 'test/fake-updater.sh' });
   const e = await waitState(s, e => e.checked !== null && e.ssh !== null);
-  assert.equal(e.ssh, true); assert.equal(e.sites['a.test'].status, 'pending');
+  assert.equal(e.ssh, true); assert.equal(e.sites[A].status, 'pending');
 });
 
 test('if already running, it does not start another, keeps the token and exits 0', async () => {
@@ -166,17 +167,17 @@ test('if already running, it does not start another, keeps the token and exits 0
 
 test('if the script dies mid-line, the end is still detected', async () => {
   const s = await start({ FAKE_CUT: '1' }); await waitState(s, e => e.checked !== null);
-  await s.post('/api/update', { sites: ['a.test'] });
+  await s.post('/api/update', { sites: [A] });
   const e = await waitState(s, e => e.run?.code === 1, 8000);
-  assert.equal(e.run.active, false); assert.equal(e.sites['a.test'].status, 'review');
+  assert.equal(e.run.active, false); assert.equal(e.sites[A].status, 'review');
 });
 
 test('a live pid that is not the run (e.g. after a reboot) counts as interrupted', async () => {
   const intruder = spawn('sleep', ['30']);
   try {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-'));
-    fs.writeFileSync(path.join(dir, 'running.json'), JSON.stringify({ pid: intruder.pid, sites: ['a.test'], start: 1 }));
-    fs.writeFileSync(path.join(dir, 'last-run.log'), '===== [1/1] a.test\n== a.test: updating\n');
+    fs.writeFileSync(path.join(dir, 'running.json'), JSON.stringify({ pid: intruder.pid, sites: [A], start: 1 }));
+    fs.writeFileSync(path.join(dir, 'last-run.log'), `===== [1/1] ${A}\n== ${A}: updating\n`);
     const s = await start({ WPU_DATA: dir });
     const e = await waitState(s, e => e.run !== null);
     assert.equal(e.run.interrupted, true); assert.equal(e.run.active, false);
@@ -185,8 +186,8 @@ test('a live pid that is not the run (e.g. after a reboot) counts as interrupted
 
 test('reattaching does not count fake durations for the time left', async () => {
   const s = await start({ FAKE_SLOW: '0.5' }); await waitState(s, e => e.checked !== null, 20000);
-  await s.post('/api/update', { sites: ['a.test', 'c.test'] });
-  await waitState(s, e => e.run?.current === 'c.test', 20000);
+  await s.post('/api/update', { sites: [A, C] });
+  await waitState(s, e => e.run?.current === C, 20000);
   s.proc.kill('SIGKILL');
   const s2 = await start({ WPU_DATA: s.dir, WPU_PORT: s.port, FAKE_SLOW: '0.5' });
   const e = await waitState(s2, e => e.run?.code === 0, 20000);
@@ -210,9 +211,9 @@ test('the full log travels only in the first state of each connection', async ()
 
 test('"Check for updates" clears an old review', async () => {
   const s = await start({ FAKE_CUT: '1' }); await waitState(s, e => e.checked !== null);
-  await s.post('/api/update', { sites: ['a.test'] });
+  await s.post('/api/update', { sites: [A] });
   await waitState(s, e => e.run?.code === 1 && !e.listing && e.checked > e.run.start);
   assert.equal((await s.post('/api/list')).status, 202);
-  const e = await waitState(s, e => !e.listing && e.sites['a.test'].status !== 'checking' && e.sites['a.test'].status !== 'review', 15000);
-  assert.equal(e.sites['a.test'].status, 'pending');
+  const e = await waitState(s, e => !e.listing && e.sites[A].status !== 'checking' && e.sites[A].status !== 'review', 15000);
+  assert.equal(e.sites[A].status, 'pending');
 });
