@@ -4,7 +4,8 @@
 # Usage: updater.sh --probe           checks the connection and the server's tools: prints OK (plus no-rsync) or why not
 #        updater.sh --json            finds the WordPress sites and prints what's pending as JSON lines
 #        updater.sh --sizes <path>…   measures how much a full copy of each site takes: one JSON line each
-#        updater.sh --apply <path>…   backs up each site and updates it
+#        updater.sh --backup <path>…  copies each whole site (database and files) into its full backup
+#        updater.sh --apply <path>…   backs up each site's database and updates it
 set -eo pipefail
 cd "$(dirname "$0")"
 
@@ -114,33 +115,30 @@ EOF
   exit 0
 fi
 
-[ "$MODE" = --apply ] && [ $# -gt 0 ] || { echo "usage: updater.sh --probe | --json | --sizes <path>… | --apply <path>…" >&2; exit 2; }
+[[ $MODE == --apply || $MODE == --backup ]] && [ $# -gt 0 ] \
+  || { echo "usage: updater.sh --probe | --json | --sizes <path>… | --backup <path>… | --apply <path>…" >&2; exit 2; }
 
 # rsync takes the ssh command as one string; each option goes single-quoted so paths with spaces work
 RSH=ssh; for O in "${SSH_OPTS[@]}"; do RSH+=" '$O'"; done
 FAILED=()
 N=0
 
-for P in "$@"; do
-  ID="$WPU_SERVER:$P"
-  N=$((N+1))
-  echo "===== [$N/$#] $ID"
-  [[ $P =~ $RE_PATH ]] || { echo "== $ID: unsupported path, not updated"; FAILED+=("$ID (path)"); continue; }
-
-  URL=$(remote "$GUARD; cd $P && wp option get home" </dev/null) || URL=""
-  [[ $URL =~ ^https?://[^[:space:]\"]+$ ]] || { echo "== $ID: can't read the site address, not updated"; FAILED+=("$ID (address)"); continue; }
-  # Backup folder named after the address: https://example.com/blog/ → example.com_blog
-  NAME=${URL#*://}; NAME=${NAME//[\/:]/_}
+# Reads the site's address into URL and names its backup folder DIR after it: https://example.com/blog/ → example.com_blog
+site_dir() {
+  URL=$(remote "$GUARD; cd $1 && wp option get home" </dev/null) || URL=""
+  [[ $URL =~ ^https?://[^[:space:]\"]+$ ]] || return 1
+  local NAME=${URL#*://}; NAME=${NAME//[\/:]/_}
   while [[ $NAME == *_ ]]; do NAME=${NAME%_}; done
   DIR="$WPU_BACKUPS/$WPU_USER@$WPU_HOST/$NAME"
-  mkdir -p "$DIR"
+}
 
-  echo "== $ID: database backup"
-  # wp db export doesn't work on some hosts (Hostinger disables proc_open()): mysqldump is called directly
-  remote "bash -s" > "$DIR/database.sql.gz.tmp" <<EOF || { echo "== $ID: database backup failed, not updated"; FAILED+=("$ID (backup)"); continue; }
+# dump <path> <file>: the site's database, gzipped. wp db export doesn't work on some hosts (Hostinger
+# disables proc_open()): mysqldump is called directly. dumped <file> tells whether it came out whole
+dump() {
+  remote "bash -s" > "$2" <<EOF
 $GUARD
 set -eo pipefail
-cd $P
+cd $1
 DUMP=\$(command -v mysqldump || command -v mariadb-dump)
 DB_NAME="\$(wp config get DB_NAME)"
 DB_USER="\$(wp config get DB_USER)"
@@ -149,8 +147,65 @@ export MYSQL_PWD="\$(wp config get DB_PASSWORD)"
 "\$DUMP" --single-transaction --no-tablespaces --default-character-set=utf8mb4 \
   -h "\$DB_HOST" -u "\$DB_USER" "\$DB_NAME" | gzip
 EOF
-  gzip -dc "$DIR/database.sql.gz.tmp" | tail -1 | grep -q "Dump completed" \
-    || { echo "== $ID: database backup incomplete, not updated"; FAILED+=("$ID (backup)"); continue; }
+}
+dumped() { gzip -dc "$1" | tail -1 | grep -q "Dump completed"; }
+
+# The last line says what needs a look
+finish() { [ ${#FAILED[@]} -eq 0 ] || { echo; echo "Check: ${FAILED[*]}"; exit 1; }; exit 0; }
+
+if [ "$MODE" = --backup ]; then
+  # Absolute, because rsync reads --link-dest relative to the folder it copies into
+  mkdir -p "$WPU_BACKUPS"; WPU_BACKUPS=$(cd "$WPU_BACKUPS" && pwd)
+  # Unchanged files are hardlinked to the previous copy, so they take no room twice. Where hardlinks
+  # don't work (a Windows bind mount), rsync copies them from the previous copy instead
+  T="$WPU_BACKUPS/.hardlink-test"; rm -f "$T" "$T.2"; touch "$T"
+  if ln "$T" "$T.2" 2>/dev/null; then LINK=--link-dest; else LINK=--copy-dest; fi
+  rm -f "$T" "$T.2"
+
+  for P in "$@"; do
+    ID="$WPU_SERVER:$P"
+    N=$((N+1))
+    echo "===== [$N/$#] $ID"
+    [[ $P =~ $RE_PATH ]] || { echo "== $ID: backup failed (path)"; FAILED+=("$ID (path)"); continue; }
+    site_dir "$P" || { echo "== $ID: backup failed (address)"; FAILED+=("$ID (address)"); continue; }
+    FULL="$DIR/full-backup"; WORK="$FULL.partial"; OLD="$FULL.old"
+    # The new copy is made aside and replaces the previous one only once it's complete, so a failed or cut
+    # copy never takes the place of a good one. First the leftovers of a cut one: a cut between the two
+    # renames at the end left the good copy in .old
+    rm -rf "$WORK"
+    [ -d "$FULL" ] || [ ! -d "$OLD" ] || mv "$OLD" "$FULL"
+    rm -rf "$OLD"
+    mkdir -p "$WORK"
+
+    echo "== $ID: database backup"
+    { dump "$P" "$WORK/database.sql.gz" && dumped "$WORK/database.sql.gz"; } \
+      || { rm -rf "$WORK"; echo "== $ID: backup failed (database)"; FAILED+=("$ID (database)"); continue; }
+    echo "== $ID: copying files"
+    # Plugins' own backup folders are skipped: they aren't needed and can weigh GBs
+    REUSE=(); [ ! -d "$FULL/files" ] || REUSE=("$LINK=$FULL/files")
+    rsync -az --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups "${REUSE[@]}" -e "$RSH" "$DEST:$P/" "$WORK/files/" \
+      && echo "{\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"bytes\":$(( $(du -sk "$WORK" | cut -f1) * 1024 ))}" > "$WORK/backup.json" \
+      || { rm -rf "$WORK"; echo "== $ID: backup failed (files)"; FAILED+=("$ID (files)"); continue; }
+    [ ! -d "$FULL" ] || mv "$FULL" "$OLD"
+    mv "$WORK" "$FULL"
+    rm -rf "$OLD"
+    echo "== $ID: OK"
+  done
+  finish
+fi
+
+for P in "$@"; do
+  ID="$WPU_SERVER:$P"
+  N=$((N+1))
+  echo "===== [$N/$#] $ID"
+  [[ $P =~ $RE_PATH ]] || { echo "== $ID: unsupported path, not updated"; FAILED+=("$ID (path)"); continue; }
+
+  site_dir "$P" || { echo "== $ID: can't read the site address, not updated"; FAILED+=("$ID (address)"); continue; }
+  mkdir -p "$DIR"
+
+  echo "== $ID: database backup"
+  dump "$P" "$DIR/database.sql.gz.tmp" || { echo "== $ID: database backup failed, not updated"; FAILED+=("$ID (backup)"); continue; }
+  dumped "$DIR/database.sql.gz.tmp" || { echo "== $ID: database backup incomplete, not updated"; FAILED+=("$ID (backup)"); continue; }
   # Only the latest one is kept: the previous one is replaced only now that the new one is verified
   mv "$DIR/database.sql.gz.tmp" "$DIR/database.sql.gz"
   # To roll a plugin back: wp plugin install <name> --version=<the one in this file> --force
@@ -176,5 +231,4 @@ EOF
   CODE=$(curl -sL --max-time 60 -o /dev/null -w '%{http_code}' "$URL") || true
   if [ "$CODE" = 200 ]; then echo "== $ID: OK"; else echo "== $ID: site responds $CODE, check it"; FAILED+=("$ID (site $CODE)"); fi
 done
-
-[ ${#FAILED[@]} -eq 0 ] || { echo; echo "Check: ${FAILED[*]}"; exit 1; }
+finish

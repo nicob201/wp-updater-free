@@ -15,11 +15,15 @@ function run(args, env = {}) {
   return { ...r, calls: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : [] };
 }
 
-// Runs the remote side for real, on this machine: a fake `ssh` executes the command locally,
-// and fake `wp`, `mysqldump` and `curl` answer like the real ones
+// Runs the remote side for real, on this machine: a fake `ssh` executes the command locally (rsync's too),
+// and fake `wp`, `mysqldump` and `curl` answer like the real ones. FAKE_RSYNC_FAIL=1 makes rsync fail on
+// the server's side; FAKE_NO_LINKS=1 makes `ln` fail, like a folder without hardlinks
 const LOCAL_BIN = {
-  ssh: '#!/bin/bash\nwhile [ $# -gt 0 ]; do case "$1" in -i|-p|-o) shift 2 ;; *) break ;; esac; done\nshift\n'
+  // GNU rsync passes user@host as -l user host
+  ssh: '#!/bin/bash\nwhile [ $# -gt 0 ]; do case "$1" in -i|-p|-o|-l) shift 2 ;; *) break ;; esac; done\nshift\n'
+     + '[ "$1" != rsync ] || [ -z "$FAKE_RSYNC_FAIL" ] || exit 23\n'
      + 'if [ "$*" = "bash -s" ]; then bash -s; else bash -c "$*"; fi\n',
+  ln: '#!/bin/bash\n[ -z "$FAKE_NO_LINKS" ] || exit 1\nexec /bin/ln "$@"\n',
   wp: '#!/bin/bash\necho "$*" >> "$WP_LOG"\ncase "$*" in\n'
     + '  "option get home --format=json") echo \'"https://example.com/blog/"\' ;;\n'
     + '  "option get home") echo "https://example.com/blog/" ;;\n'
@@ -40,18 +44,21 @@ const LOCAL_BIN = {
   curl: '#!/bin/bash\necho "${FAKE_HTTP:-200}"\n',
 };
 
-// opts.prepare(siteDir) runs before the script, to add files to the fake site
+// opts.prepare(siteDir) runs before the script, to add files to the fake site. opts.dir reuses the
+// folder of an earlier run (its site and backups), or a new one with only backups in it
 function runLocal(args, env = {}, opts = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-local-'));
-  fs.mkdirSync(path.join(dir, 'bin')); fs.mkdirSync(path.join(dir, 'site'));
-  fs.writeFileSync(path.join(dir, 'site', 'wp-load.php'), '');
-  for (const [name, body] of Object.entries(LOCAL_BIN)) fs.writeFileSync(path.join(dir, 'bin', name), body, { mode: 0o755 });
+  const dir = opts.dir || fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-local-'));
+  if (!fs.existsSync(path.join(dir, 'site'))) {
+    fs.mkdirSync(path.join(dir, 'bin')); fs.mkdirSync(path.join(dir, 'site'));
+    fs.writeFileSync(path.join(dir, 'site', 'wp-load.php'), '');
+    for (const [name, body] of Object.entries(LOCAL_BIN)) fs.writeFileSync(path.join(dir, 'bin', name), body, { mode: 0o755 });
+  }
   const site = fs.realpathSync(path.join(dir, 'site'));
   opts.prepare?.(site);
   const r = spawnSync('bash', [path.join(ROOT, 'updater.sh'), ...args.map(a => a === 'SITE' ? site : a)], { encoding: 'utf8', timeout: 10000,
     env: { ...process.env, PATH: `${dir}/bin:${process.env.PATH}`, ...BASE, WPU_PATH: site, WPU_BACKUPS: path.join(dir, 'backups'),
            WPU_EXCLUDE: 'elementor,elementor-pro', WP_LOG: path.join(dir, 'wp.log'), ...env } });
-  return { ...r, site, id: `abcd1234:${site}`, backup: path.join(dir, 'backups', 'u1@example.com', 'example.com_blog'),
+  return { ...r, dir, site, id: `abcd1234:${site}`, backup: path.join(dir, 'backups', 'u1@example.com', 'example.com_blog'),
            wpLog: () => fs.readFileSync(path.join(dir, 'wp.log'), 'utf8') };
 }
 
@@ -114,6 +121,74 @@ test("--sizes reports a site it can't measure", () => {
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.deepEqual(r.stdout.trim().split('\n').map(l => JSON.parse(l)), [
     { site: 'abcd1234:/bad path', error: 'could not measure' }, { site: 'abcd1234:/no/such/site', error: 'could not measure' }]);
+});
+
+const full = (r, f = '') => path.join(r.backup, 'full-backup', f);
+const record = r => JSON.parse(fs.readFileSync(full(r, 'backup.json'), 'utf8'));
+
+test('--backup copies the database and the files, without plugin backups', () => {
+  const r = runLocal(['--backup', 'SITE'], {}, { prepare: site => {
+    fs.mkdirSync(path.join(site, 'wp-content', 'updraft'), { recursive: true });
+    fs.writeFileSync(path.join(site, 'wp-content', 'updraft', 'big.zip'), 'x');
+  } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.stdout.trim().split('\n'), [`===== [1/1] ${r.id}`, `== ${r.id}: database backup`, `== ${r.id}: copying files`, `== ${r.id}: OK`]);
+  assert.match(require('node:zlib').gunzipSync(fs.readFileSync(full(r, 'database.sql.gz'))).toString().trim(), /Dump completed on \S+$/);
+  assert.ok(fs.existsSync(full(r, 'files/wp-load.php')));
+  assert.ok(fs.existsSync(full(r, 'files/wp-content')) && !fs.existsSync(full(r, 'files/wp-content/updraft')));
+  assert.match(record(r).date, /^\d{4}-\d\d-\d\dT/); assert.ok(record(r).bytes > 0);
+  assert.ok(!fs.existsSync(path.join(r.backup, 'full-backup.partial')) && !fs.existsSync(path.join(r.backup, 'full-backup.old')));
+});
+
+for (const [name, env, reused] of [['a second backup replaces the first and reuses unchanged files', {}, true],
+                                   ['--backup without hardlinks still copies, through --copy-dest', { FAKE_NO_LINKS: '1' }, false]])
+  test(name, () => {   // the same inode means the file was hardlinked to the previous copy (--link-dest)
+    const a = runLocal(['--backup', 'SITE'], env);
+    assert.equal(a.status, 0, a.stdout + a.stderr);
+    const [ino, date] = [fs.statSync(full(a, 'files/wp-load.php')).ino, record(a).date];
+    const b = runLocal(['--backup', 'SITE'], env, { dir: a.dir });
+    assert.equal(b.status, 0, b.stdout + b.stderr);
+    assert.equal(fs.statSync(full(b, 'files/wp-load.php')).ino === ino, reused);
+    assert.ok(record(b).date >= date);
+  });
+
+test('a failed backup keeps the previous one and leaves no half copy', () => {   // Review Focus 4
+  for (const [env, step] of [[{ FAKE_DUMP_BAD: '1' }, 'database'], [{ FAKE_RSYNC_FAIL: '1' }, 'files']]) {
+    const a = runLocal(['--backup', 'SITE']);
+    const before = fs.readFileSync(full(a, 'backup.json'));
+    const b = runLocal(['--backup', 'SITE'], env, { dir: a.dir });
+    assert.equal(b.status, 1, step);
+    assert.match(b.stdout, new RegExp(`== ${b.id}: backup failed \\(${step}\\)\n`));
+    assert.match(b.stdout.trim().split('\n').at(-1), /^Check: /);
+    assert.deepEqual(fs.readFileSync(full(b, 'backup.json')), before, step);
+    assert.ok(fs.existsSync(full(b, 'files/wp-load.php')), step);
+    assert.ok(!fs.existsSync(path.join(b.backup, 'full-backup.partial')), step);
+  }
+});
+
+test('a backup left halfway is cleaned up by the next one', () => {   // Review Focus 1
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-local-'));
+  const site = path.join(dir, 'backups', 'u1@example.com', 'example.com_blog');
+  const good = '{"date":"2026-01-01T00:00:00Z","bytes":1}';
+  // Cut between the two renames: the good copy is in .old; and a stale work folder
+  fs.mkdirSync(path.join(site, 'full-backup.old'), { recursive: true }); fs.mkdirSync(path.join(site, 'full-backup.partial'));
+  fs.writeFileSync(path.join(site, 'full-backup.old', 'backup.json'), good);
+  fs.writeFileSync(path.join(site, 'full-backup.partial', 'x'), '');
+  const r = runLocal(['--backup', 'SITE'], { FAKE_DUMP_BAD: '1' }, { dir });
+  assert.equal(r.status, 1);
+  assert.equal(fs.readFileSync(full(r, 'backup.json'), 'utf8'), good);
+  assert.ok(!fs.existsSync(path.join(site, 'full-backup.old')) && !fs.existsSync(path.join(site, 'full-backup.partial')));
+  // Nothing of a stale work folder ends up in the next good copy
+  fs.mkdirSync(path.join(site, 'full-backup.partial', 'files'), { recursive: true });
+  fs.writeFileSync(path.join(site, 'full-backup.partial', 'files', 'stale.php'), '');
+  assert.equal(runLocal(['--backup', 'SITE'], {}, { dir }).status, 0);
+  assert.ok(fs.existsSync(full(r, 'files/wp-load.php')) && !fs.existsSync(full(r, 'files/stale.php')));
+});
+
+test('--backup never runs a command that writes to the site', () => {
+  const r = runLocal(['--backup', 'SITE']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  for (const l of r.wpLog().trim().split('\n')) assert.match(l, /^(option get home|config get \S+)$/);
 });
 
 test('every ssh call is non-interactive and uses the configured key, port and host', () => {

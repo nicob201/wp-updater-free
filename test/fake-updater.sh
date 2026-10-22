@@ -38,6 +38,14 @@ case "$1" in
       B=700000000; [ "$p" = /sites/a ] && B=2400000000
       sleep "$L"; echo "{\"site\":\"$S:$p\",\"bytes\":$B}"
     done ;;
+  --backup)   # writes only backup.json, in the folder the real one would use for the --json address
+    shift; N=0
+    for p in "$@"; do
+      N=$((N+1)); d="$S:$p"; F="$WPU_BACKUPS/$WPU_USER@$WPU_HOST/${p##*/}.$S.test/full-backup"
+      for l in "===== [$N/$#] $d" "== $d: database backup" "== $d: copying files"; do echo "$l"; sleep "$L"; done
+      mkdir -p "$F"; echo '{"date":"2026-10-22T12:00:00Z","bytes":123}' > "$F/backup.json"
+      echo "== $d: OK"
+    done ;;
   --apply)
     shift; N=0
     id() { case $1 in /*) echo "$S:$1" ;; *) echo "$1" ;; esac; }   # takes site paths like the real one, or full ids
