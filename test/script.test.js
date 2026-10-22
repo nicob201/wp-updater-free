@@ -28,7 +28,11 @@ const LOCAL_BIN = {
     + '  "config get table_prefix --format=json") echo \'"wp_"\' ;;\n'
     + '  "core version") echo 6.6.2 ;;\n'
     + '  "core check-update --force-check --format=json") echo \'[{"version":"6.8.3","update_type":"major"}]\' ;;\n'
-    + '  "plugin list --update=available"*) echo \'[{"name":"akismet","status":"active","version":"5.3","update_version":"5.5"}]\' ;;\n'
+    // WP-CLI before 2.10 has no requires/requires_php fields: it fails with "Invalid field"
+    + '  *" list --fields="*requires*) [ -z "$FAKE_OLD_WPCLI" ] || { echo "Error: Invalid field: requires." >&2; exit 1; }\n'
+    + '    case "$*" in plugin*) printf %s \'[{"name":"akismet","status":"active","update":"available","version":"5.3","update_version":"5.5","requires":"6.0","requires_php":"7.2"},\'\n'
+    + '      echo \'{"name":"contact-form-7","status":"inactive","update":"unavailable","version":"5.9","update_version":"6.2.3","requires":"7.1","requires_php":"8.3"}]\' ;; esac ;;\n'
+    + '  "plugin list --update=available"*) echo \'[{"name":"akismet","status":"active","update":"available","version":"5.3","update_version":"5.5"}]\' ;;\n'
     + '  "config get "*) echo x ;;\n'
     + 'esac\n',
   mysqldump: '#!/bin/bash\necho "-- dump"\n[ -n "$FAKE_DUMP_BAD" ] || echo "-- Dump completed on 2026-10-21"\n',
@@ -53,7 +57,16 @@ test('--json prints a valid site line with address, database, version and exclus
   const site = JSON.parse(r.stdout.trim().split('\n').at(-1));
   assert.deepEqual(site, { site: r.id, url: 'https://example.com/blog/', db: { name: 'db_main', host: 'localhost', prefix: 'wp_' }, wp: '6.6.2',
     exclude: ['elementor', 'elementor-pro'], core: [{ version: '6.8.3', update_type: 'major' }],
-    plugins: [{ name: 'akismet', status: 'active', version: '5.3', update_version: '5.5' }], themes: [] });
+    plugins: [{ name: 'akismet', status: 'active', update: 'available', version: '5.3', update_version: '5.5', requires: '6.0', requires_php: '7.2' },
+              { name: 'contact-form-7', status: 'inactive', update: 'unavailable', version: '5.9', update_version: '6.2.3', requires: '7.1', requires_php: '8.3' }],
+    themes: [] });
+});
+
+test('--json still lists with a WP-CLI too old to say what an update needs', () => {
+  const r = runLocal(['--json'], { FAKE_OLD_WPCLI: '1' });
+  const site = JSON.parse(r.stdout.trim().split('\n').at(-1));
+  assert.deepEqual(site.plugins, [{ name: 'akismet', status: 'active', update: 'available', version: '5.3', update_version: '5.5' }]);
+  assert.doesNotMatch(r.stderr, /Invalid field/);
 });
 
 test('--apply backs up the database, saves the versions and updates with the exclusions', () => {

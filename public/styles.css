@@ -159,7 +159,10 @@ a.button { display: inline-flex; align-items: center; text-decoration: none; }
 .site.open .row:hover { background: transparent; }
 
 .name { display: grid; gap: 2px; min-width: 0; }
-.domain { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the badge drops below the address when both don't fit: the address keeps the room */
+.title { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.domain { min-width: 0; max-width: 100%; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { flex: none; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--muted); font: 11px/18px var(--mono); }
 .summary { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--muted); font: 12px/1.6 var(--mono); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .summary.error { color: var(--red); white-space: normal; }
 .mini { flex: none; width: 96px; }
