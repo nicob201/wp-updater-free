@@ -224,3 +224,68 @@ test('a run across two servers counts sites in order and tracks the file copy st
   assert.equal(e.sites[id(TV, 'x')].status, 'review'); assert.equal(e.sites[id(TV, 'x')].reason, 'file copy failed, not updated');
   assert.equal(e.sites[id(SV, 'a')].status, 'done'); assert.equal(e.run.active, false);
 });
+
+// ---- Full backups ----
+
+const listed = () => { const e = S.newState(); S.listingLine(e, LIST, 1); S.listingLine(e, A, 2); S.listingLine(e, C, 2); S.endListing(e, 3); return e; };
+
+test('a backup run never changes the update status of its sites', () => {
+  const e = listed();
+  const pending = structuredClone(e.sites[A_ID].pending);
+  S.startRun(e, [A_ID], 10, 'backup');
+  assert.equal(e.run.kind, 'backup');
+  assert.deepEqual(e.sites[A_ID].backup, { status: 'queued', step: null, reason: null });
+  assert.equal(e.sites[A_ID].status, 'pending');
+  S.runLine(e, `===== [1/1] ${A_ID}`, 20);
+  assert.equal(e.sites[A_ID].backup.status, 'copying'); assert.equal(e.sites[A_ID].status, 'pending');
+  S.runLine(e, `== ${A_ID}: database backup`, 21); assert.equal(e.sites[A_ID].backup.step, 'database');
+  S.runLine(e, `== ${A_ID}: copying files`, 22); assert.equal(e.sites[A_ID].backup.step, 'files');
+  for (const l of [`== ${A_ID}: OK`, 'END code=0']) S.runLine(e, l, 30);
+  const a = e.sites[A_ID];
+  assert.equal(a.status, 'pending'); assert.deepEqual(a.pending, pending); assert.deepEqual(a.result, []);
+  assert.deepEqual(a.backup, { status: 'done', step: null, reason: null });
+  assert.deepEqual(e.run.done, [A_ID]); assert.deepEqual(e.run.durations, [10]); assert.equal(e.run.active, false);
+});
+
+test('backup run: a failed step keeps its reason, until the next backup run', () => {
+  const e = listed();
+  S.startRun(e, [A_ID], 10, 'backup');
+  for (const l of [`===== [1/1] ${A_ID}`, `== ${A_ID}: database backup`, `== ${A_ID}: copying files`,
+    `== ${A_ID}: backup failed (files)`, '', 'Check: x', 'END code=1']) S.runLine(e, l, 20);
+  assert.deepEqual(e.sites[A_ID].backup, { status: 'failed', step: null, reason: 'backup failed (files)' });
+  assert.equal(e.sites[A_ID].status, 'pending'); assert.deepEqual(e.run.done, []);
+  S.startRun(e, [C_ID], 30);   // an update run leaves it
+  assert.equal(e.sites[A_ID].backup.status, 'failed');
+  S.startRun(e, [C_ID], 40, 'backup');
+  assert.equal(e.sites[A_ID].backup, null);
+});
+
+test('backup run cut halfway: the site being copied failed, the queued ones are untouched', () => {   // Review Focus 1
+  const e = listed();
+  S.startRun(e, [A_ID, C_ID], 10, 'backup');
+  for (const l of [`===== [1/2] ${A_ID}`, `== ${A_ID}: copying files`]) S.runLine(e, l, 20);
+  S.closeRun(e, null);
+  assert.deepEqual(e.sites[A_ID].backup, { status: 'failed', step: null, reason: 'the backup stopped halfway' });
+  assert.equal(e.sites[C_ID].backup, null);
+  assert.equal(e.sites[A_ID].status, 'pending'); assert.equal(e.sites[C_ID].status, 'pending');
+});
+
+test('update runs say their kind', () => {
+  const e = listed();
+  S.startRun(e, [A_ID], 1);
+  assert.equal(e.run.kind, 'update');
+});
+
+test('sizes: measuring, measured, failed, and leftovers become unknown', () => {   // Review Focus 5
+  const e = listed();
+  assert.equal(e.sites[A_ID].size, null);
+  S.startSizes(e, [A_ID, B_ID, C_ID]);
+  assert.deepEqual(e.sites[B_ID].size, { status: 'measuring' });
+  S.sizeLine(e, JSON.stringify({ site: A_ID, bytes: 2400000000 }));
+  S.sizeLine(e, JSON.stringify({ site: B_ID, error: 'could not measure' }));
+  for (const junk of ['', 'PHP notice', '{"site":"zzzzzzzz:/x","bytes":1}', JSON.stringify({ site: C_ID, bytes: 'many' })]) S.sizeLine(e, junk);
+  S.endSizes(e, [A_ID, B_ID, C_ID]);
+  assert.deepEqual(e.sites[A_ID].size, { status: 'done', bytes: 2400000000 });
+  assert.deepEqual(e.sites[B_ID].size, { status: 'error' });
+  assert.deepEqual(e.sites[C_ID].size, { status: 'error' });
+});
