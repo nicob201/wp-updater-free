@@ -87,6 +87,14 @@
       <form id="server-form" class="server-form" novalidate hidden>
         <h3 id="form-title">Add server</h3>
         <div class="fields">
+          <label class="wide">Hosting<select name="hosting">
+            <option value="">Choose yours to fill in the port</option>
+            <option value="hostinger">Hostinger</option>
+            <option value="cpanel">cPanel</option>
+            <option value="siteground">SiteGround</option>
+            <option value="other">VPS / Other</option>
+          </select></label>
+          <p id="hosting-help" class="help wide" hidden></p>
           <label>Name<input name="name" maxlength="60" autocomplete="off"></label>
           <label>Host<input name="host" placeholder="example.com or 203.0.113.10" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
           <label>Port<input name="port" type="number" min="1" max="65535" value="22"></label>
