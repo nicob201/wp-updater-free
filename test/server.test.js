@@ -363,3 +363,96 @@ test('the full log travels only in the first state of each connection', async ()
   }
   assert.ok(Array.isArray(states[0].log)); assert.equal('log' in states[1], false);
 });
+
+// ---- Full backups ----
+
+test('POST /api/sizes measures the chosen sites', async () => {
+  const s = await start(); await waitState(s, listed);
+  assert.equal((await s.post('/api/sizes', { sites: [A, B] })).status, 202);
+  const e = await waitState(s, e => e.sites[A].size?.status === 'done' && e.sites[B].size?.status === 'done');
+  assert.deepEqual(e.sites[A].size, { status: 'done', bytes: 2400000000 });
+  assert.deepEqual(e.sites[B].size, { status: 'done', bytes: 700000000 });
+  assert.equal(e.sites[C].size, null);
+  for (const sites of [[], ['aaaaaaaa:/x;y'], ['cccccccc:/sites/a']]) assert.equal((await s.post('/api/sizes', { sites })).status, 400, JSON.stringify(sites));
+});
+
+test('measuring again replaces the measuring in progress', async () => {
+  const s = await start({ FAKE_SLOW: '1' }); await waitState(s, listed, 20000);
+  assert.equal((await s.post('/api/sizes', { sites: [A, B] })).status, 202);
+  assert.equal((await s.post('/api/sizes', { sites: [B] })).status, 202);
+  // A was left unmeasured; B is measured by the new one, and the old one's end doesn't touch it
+  const e = await waitState(s, e => e.sites[A].size?.status === 'error');
+  assert.deepEqual(e.sites[B].size, { status: 'measuring' });
+  assert.deepEqual((await waitState(s, e => e.sites[B].size?.status !== 'measuring')).sites[B].size, { status: 'done', bytes: 700000000 });
+});
+
+test('POST /api/backup copies, leaves the update status alone and does not list again', async () => {
+  const s = await start(); const before = await waitState(s, listed);
+  assert.equal(before.hardlinks, true);
+  assert.equal((await s.post('/api/backup', { sites: [A] })).status, 202);
+  const e = await waitState(s, e => e.run?.kind === 'backup' && e.run.code === 0);
+  assert.equal(e.sites[A].status, 'pending'); assert.equal(e.sites[A].backup.status, 'done');
+  assert.deepEqual(e.sites[A].lastFull, { date: '2026-10-22T12:00:00Z', bytes: 123 });
+  assert.equal(e.sites[B].lastFull, null);
+  assert.equal(e.checked, before.checked); assert.equal(e.listing, false);
+  assert.ok(!fs.existsSync(path.join(s.dir, 'running.json')));
+});
+
+test("POST /api/backup refuses what it can't copy", async () => {
+  const s = await start({}, { ...CONFIG, excludedSites: [B] }); await waitState(s, listed);
+  for (const sites of [[], ['zzzzzzzz:/sites/a'], ['cccccccc:/sites/a'], [B], ['aaaaaaaa:/sites/a;rm'], [A, B]])
+    assert.equal((await s.post('/api/backup', { sites })).status, 400, JSON.stringify(sites));
+  assert.equal((await s.post('/api/backup', {})).status, 400);
+  const s2 = await start({ FAKE_NO_RSYNC: '1' }); await waitState(s2, e => listed(e) && e.servers.aaaaaaaa.rsync === false);
+  const r = await s2.post('/api/backup', { sites: [A] });
+  assert.equal(r.status, 400); assert.match((await r.json()).error, /can't be backed up/);
+});
+
+test("sites that share a backup folder can't be backed up", async () => {   // Review Focus 3
+  const s = await start({ FAKE_DUP_URL: '1' });   // c answers http:// of a's address
+  const e = await waitState(s, listed);
+  assert.equal(e.sites[A].backupNote, 'Shares its backup folder with http://a.aaaaaaaa.test');
+  assert.equal(e.sites[C].backupNote, 'Shares its backup folder with https://a.aaaaaaaa.test');
+  assert.equal(e.sites[B].backupNote, null);
+  assert.notEqual(e.sites[C].status, 'duplicate');   // not the same address for the updates, but the same folder
+  assert.equal((await s.post('/api/backup', { sites: [A] })).status, 400);
+  assert.equal((await s.post('/api/backup', { sites: [B] })).status, 202);
+});
+
+test('backups and sizes are refused during an update', async () => {
+  const s = await start({ FAKE_SLOW: '1' }); await waitState(s, listed, 20000);
+  assert.equal((await s.post('/api/update', { sites: [A] })).status, 202);
+  assert.equal((await s.post('/api/backup', { sites: [A] })).status, 409);
+  assert.equal((await s.post('/api/sizes', { sites: [A] })).status, 409);
+});
+
+test('during a backup nothing else starts', async () => {
+  const s = await start({ FAKE_SLOW: '1' }); await waitState(s, listed, 20000);
+  assert.equal((await s.post('/api/backup', { sites: [A] })).status, 202);
+  assert.equal((await s.post('/api/update', { sites: [A] })).status, 409);
+  assert.equal((await s.post('/api/list')).status, 409);
+  assert.equal((await s.post('/api/backup', { sites: [B] })).status, 409);
+  const r = await s.post('/api/config', CONFIG);
+  assert.equal(r.status, 409); assert.match((await r.json()).error, /A backup is running/);
+});
+
+test('a dead backup run without END → interrupted, and the site keeps its update status', async () => {   // Review Focus 1
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-'));
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(CONFIG));
+  fs.writeFileSync(path.join(dir, 'running.json'), JSON.stringify({ pid: 999999, sites: [A], start: 1, kind: 'backup' }));
+  fs.writeFileSync(path.join(dir, 'last-run.log'), `===== [1/1] ${A}\n== ${A}: copying files\n`);
+  const s = await start({ WPU_DATA: dir });
+  const e = await waitState(s, e => e.run !== null && listed(e));
+  assert.equal(e.run.interrupted, true); assert.equal(e.run.kind, 'backup');
+  assert.equal(e.sites[A].backup.status, 'failed'); assert.equal(e.sites[A].status, 'pending');
+});
+
+test('a backup run that ended while the bridge was closed still lists the sites', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-'));
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(CONFIG));
+  fs.writeFileSync(path.join(dir, 'running.json'), JSON.stringify({ pid: 999999, sites: [A], start: 1, kind: 'backup' }));
+  fs.writeFileSync(path.join(dir, 'last-run.log'), `===== [1/1] ${A}\n== ${A}: copying files\n== ${A}: OK\n\nEND code=0\n`);
+  const s = await start({ WPU_DATA: dir });
+  const e = await waitState(s, e => e.run?.code === 0 && listed(e));
+  assert.equal(e.sites[A].status, 'pending'); assert.equal(e.sites[A].backup.status, 'done');
+});
