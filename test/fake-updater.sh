@@ -3,7 +3,7 @@
 # Reads WPU_SERVER, WPU_SKIP and WPU_EXCLUDE like the real one. Test knobs:
 # FAKE_SLOW: seconds between lines (0.2). FAKE_SSH=bad: no connection (like the real one: nothing, exits 255).
 # FAKE_CUT=1: --apply dies in the middle of a line, as if it were killed. FAKE_DUP=1: site c shares a's database.
-# FAKE_NO_RSYNC=1: --probe says the server has no rsync.
+# FAKE_NO_RSYNC=1: --probe says the server has no rsync. FAKE_DUP_URL=1: site c answers http:// of a's address.
 L=${FAKE_SLOW:-0.2}
 S=${WPU_SERVER:-aaaaaaaa}
 EXCLUDE=${WPU_EXCLUDE-elementor,elementor-pro}
@@ -28,8 +28,9 @@ case "$1" in
         c) PLUGINS=$(item hostinger 3.0.76 3.0.80); THEMES= ;;
       esac
       DB=$p; [ "$p" = c ] && [ -n "$FAKE_DUP" ] && DB=a
+      U=https://$p.$S.test; [ "$p" = c ] && [ -n "$FAKE_DUP_URL" ] && U=http://a.$S.test
       sleep "$L"; echo "===== [$N/${#TODO[@]}] $S:/sites/$p"
-      sleep "$L"; echo "{\"site\":\"$S:/sites/$p\",\"url\":\"https://$p.$S.test\",\"db\":{\"name\":\"db_${DB}_$S\",\"host\":\"localhost\",\"prefix\":\"wp_\"},\"wp\":\"7.1.3\",\"exclude\":[$( [ -n "$EXCLUDE" ] && echo "\"${EXCLUDE//,/\",\"}\"")],\"core\":[],\"plugins\":[$PLUGINS],\"themes\":[$THEMES]}"
+      sleep "$L"; echo "{\"site\":\"$S:/sites/$p\",\"url\":\"$U\",\"db\":{\"name\":\"db_${DB}_$S\",\"host\":\"localhost\",\"prefix\":\"wp_\"},\"wp\":\"7.1.3\",\"exclude\":[$( [ -n "$EXCLUDE" ] && echo "\"${EXCLUDE//,/\",\"}\"")],\"core\":[],\"plugins\":[$PLUGINS],\"themes\":[$THEMES]}"
     done
     ;;
   --sizes)
