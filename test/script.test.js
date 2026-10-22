@@ -33,18 +33,21 @@ const LOCAL_BIN = {
     + '    case "$*" in plugin*) printf %s \'[{"name":"akismet","status":"active","update":"available","version":"5.3","update_version":"5.5","requires":"6.0","requires_php":"7.2"},\'\n'
     + '      echo \'{"name":"contact-form-7","status":"inactive","update":"unavailable","version":"5.9","update_version":"6.2.3","requires":"7.1","requires_php":"8.3"}]\' ;; esac ;;\n'
     + '  "plugin list --update=available"*) echo \'[{"name":"akismet","status":"active","update":"available","version":"5.3","update_version":"5.5"}]\' ;;\n'
+    + '  "db size --size_format=b") echo 5000 ;;\n'
     + '  "config get "*) echo x ;;\n'
     + 'esac\n',
   mysqldump: '#!/bin/bash\necho "-- dump"\n[ -n "$FAKE_DUMP_BAD" ] || echo "-- Dump completed on 2026-10-21"\n',
   curl: '#!/bin/bash\necho "${FAKE_HTTP:-200}"\n',
 };
 
-function runLocal(args, env = {}) {
+// opts.prepare(siteDir) runs before the script, to add files to the fake site
+function runLocal(args, env = {}, opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-local-'));
   fs.mkdirSync(path.join(dir, 'bin')); fs.mkdirSync(path.join(dir, 'site'));
   fs.writeFileSync(path.join(dir, 'site', 'wp-load.php'), '');
   for (const [name, body] of Object.entries(LOCAL_BIN)) fs.writeFileSync(path.join(dir, 'bin', name), body, { mode: 0o755 });
   const site = fs.realpathSync(path.join(dir, 'site'));
+  opts.prepare?.(site);
   const r = spawnSync('bash', [path.join(ROOT, 'updater.sh'), ...args.map(a => a === 'SITE' ? site : a)], { encoding: 'utf8', timeout: 10000,
     env: { ...process.env, PATH: `${dir}/bin:${process.env.PATH}`, ...BASE, WPU_PATH: site, WPU_BACKUPS: path.join(dir, 'backups'),
            WPU_EXCLUDE: 'elementor,elementor-pro', WP_LOG: path.join(dir, 'wp.log'), ...env } });
@@ -93,6 +96,24 @@ test('--apply never updates a site whose database backup is incomplete', () => {
   assert.doesNotMatch(r.stdout, /updating/);
   assert.doesNotMatch(r.wpLog(), /update --all|core update/);
   assert.ok(!fs.existsSync(path.join(r.backup, 'database.sql.gz')));
+});
+
+test('--sizes measures the files without plugin backups, plus the database', () => {
+  const r = runLocal(['--sizes', 'SITE'], {}, { prepare: site => {
+    fs.mkdirSync(path.join(site, 'wp-content', 'updraft'), { recursive: true });
+    fs.writeFileSync(path.join(site, 'wp-content', 'updraft', 'big.zip'), Buffer.alloc(300 * 1024, 1));
+  } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const lines = r.stdout.trim().split('\n').map(l => JSON.parse(l));
+  assert.equal(lines.length, 1); assert.equal(lines[0].site, r.id);
+  assert.ok(lines[0].bytes >= 5000 && lines[0].bytes < 5000 + 100 * 1024, String(lines[0].bytes));
+});
+
+test("--sizes reports a site it can't measure", () => {
+  const r = runLocal(['--sizes', '/bad path', '/no/such/site']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.stdout.trim().split('\n').map(l => JSON.parse(l)), [
+    { site: 'abcd1234:/bad path', error: 'could not measure' }, { site: 'abcd1234:/no/such/site', error: 'could not measure' }]);
 });
 
 test('every ssh call is non-interactive and uses the configured key, port and host', () => {

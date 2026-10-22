@@ -3,6 +3,7 @@
 # The bridge (server.js) passes the connection in WPU_* variables.
 # Usage: updater.sh --probe           checks the connection and the server's tools: prints OK (plus no-rsync) or why not
 #        updater.sh --json            finds the WordPress sites and prints what's pending as JSON lines
+#        updater.sh --sizes <path>…   measures how much a full copy of each site takes: one JSON line each
 #        updater.sh --apply <path>…   backs up each site and updates it
 set -eo pipefail
 cd "$(dirname "$0")"
@@ -90,7 +91,30 @@ EOF
   exit 0
 fi
 
-[ "$MODE" = --apply ] && [ $# -gt 0 ] || { echo "usage: updater.sh --probe | --json | --apply <path>…" >&2; exit 2; }
+if [ "$MODE" = --sizes ]; then
+  # The files without the plugins' own backup folders (a full copy skips them), plus the database.
+  # wp db size goes through $wpdb, so it works where the host disables proc_open
+  for P in "$@"; do
+    ID="$WPU_SERVER:$P"
+    B=""
+    if [[ $P =~ $RE_PATH ]]; then
+      B=$(remote "bash -s" <<EOF
+$GUARD
+set -eo pipefail
+cd $P
+K=\$(du -sk . | cut -f1)
+for X in wp-content/updraft wp-content/wpvividbackups; do [ ! -d \$X ] || K=\$((K - \$(du -sk \$X | cut -f1))); done
+DB=\$(wp db size --size_format=b) || DB=0
+echo \$((K * 1024 + DB))
+EOF
+) || B=""
+    fi
+    if [[ $B =~ ^[0-9]+$ ]]; then echo "{\"site\":\"$ID\",\"bytes\":$B}"; else echo "{\"site\":\"$ID\",\"error\":\"could not measure\"}"; fi
+  done
+  exit 0
+fi
+
+[ "$MODE" = --apply ] && [ $# -gt 0 ] || { echo "usage: updater.sh --probe | --json | --sizes <path>… | --apply <path>…" >&2; exit 2; }
 
 # rsync takes the ssh command as one string; each option goes single-quoted so paths with spaces work
 RSH=ssh; for O in "${SSH_OPTS[@]}"; do RSH+=" '$O'"; done
