@@ -11,5 +11,16 @@ services:
       - ./data:/app/data
       - ssh:/ssh
 
+  # A fake server with outdated WordPress sites, to try the tool safely. In Settings: host demo, port 22, user demo.
+  # Start: docker compose --profile demo up -d · Reset: docker compose --profile demo up -d --force-recreate demo
+  demo:
+    build: demo
+    profiles: [demo]
+    volumes:
+      - ssh:/ssh:ro   # trusts only the app's key
+    networks:
+      default:
+        aliases: [site1.demo, site2.demo, site3.demo]   # the app checks each site at its address after updating
+
 volumes:
   ssh: {}
