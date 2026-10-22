@@ -140,7 +140,8 @@ You can add as many servers as you want. "Update all" covers all of them.
 ## Daily use
 
 - **Check for updates** asks every server what's pending. It also runs on its own when the tool starts, when you change the settings and after each update.
-- Click a site to see what's pending: its current and new version.
+- Next to each site's address you see its WordPress version. Click a site to see what's pending: its current and new version.
+- **Can't update here**, under a site's pending updates, lists the ones this server can't apply, with the reason, like "Needs PHP 8.3": the new version needs a newer WordPress or PHP than the site has. They don't count as pending and the tool skips them.
 - **Update** updates that site. **Update all** updates every site with updates pending, one after another, on every server. Each site is backed up first, then WordPress, plugins, themes and translations are updated.
 - You can close the page while it runs: the update keeps going. Open the page again to see the progress and the live log.
 - A site marked **Check** needs a look: its update failed, or its page didn't load afterwards. The reason is next to it. You can update it again with its own **Update** button.
@@ -249,6 +250,8 @@ docker compose exec app ssh-keygen -R '[example.com]:65002' -f /ssh/known_hosts
 ```
 
 If you don't know why it changed, ask your host before you do this: it can also mean someone is in the middle. Without Docker, run `ssh-keygen -R` with `-f data/ssh/known_hosts`.
+
+**"Needs PHP 8.3", but your site already runs PHP 8.3.** WP-CLI checks the PHP the server uses over SSH, and on shared hosts it can be older than your site's. Ask your host how to use a newer PHP over SSH.
 
 **"SSH rejected the key."** The tool's key isn't added to that account yet, or it was added to another account. Copy it again from **Settings** and check the user. On cPanel, check that the key is authorized.
 

@@ -43,6 +43,40 @@ test('listing: pending core is the highest version offered, the one wp core upda
   assert.equal(e.sites[A_ID].pending[0].next, '7.1.3');
 });
 
+test('listing: keeps the WordPress version of each site', () => {
+  const e = S.newState(); S.listingLine(e, LIST, 1); S.listingLine(e, A, 2);
+  assert.equal(e.sites[A_ID].wp, '6.8.1');
+});
+
+// WP-CLI marks an update "unavailable" when the new version needs a newer WordPress or PHP; wp plugin update skips it
+const CF7 = { name: 'contact-form-7', status: 'inactive', update: 'unavailable', version: '5.9', update_version: '6.2.3', requires: '7.1', requires_php: '8.3' };
+test("listing: updates the server can't apply aren't pending and say what they need", () => {
+  const e = S.newState(); S.listingLine(e, LIST, 1);
+  S.listingLine(e, SITE(SV, 'a', { wp: '7.1.3',
+    plugins: [{ ...P, update: 'available' }, CF7, { name: 'akismet', status: 'active', update: 'none', version: '5.5', update_version: '' }],
+    themes: [{ name: 'astra', status: 'active', update: 'unavailable', version: '4.0', update_version: '5.0', requires: '7.2', requires_php: '7.4' }] }), 2);
+  const s = e.sites[A_ID];
+  assert.deepEqual(s.pending.map(i => i.name), ['woocommerce']);
+  assert.deepEqual(s.unavailable, [
+    { type: 'plugin', name: 'contact-form-7', current: '5.9', next: '6.2.3', needs: 'PHP 8.3' },
+    { type: 'theme', name: 'astra', current: '4.0', next: '5.0', needs: 'WordPress 7.2' }]);
+  assert.equal(s.status, 'pending');
+});
+
+test("listing: a site whose only updates can't be applied is up to date", () => {
+  const e = S.newState(); S.listingLine(e, LIST, 1);
+  S.listingLine(e, SITE(SV, 'a', { wp: '7.1.3', plugins: [CF7] }), 2);
+  assert.equal(e.sites[A_ID].status, 'up-to-date');
+  assert.equal(e.sites[A_ID].unavailable.length, 1);
+});
+
+test('listing: a site that fails to list forgets the updates it could not apply', () => {
+  const e = S.newState(); S.listingLine(e, LIST, 1);
+  S.listingLine(e, SITE(SV, 'a', { wp: '7.1.3', plugins: [CF7] }), 2);
+  S.listingLine(e, JSON.stringify({ site: A_ID, error: 'ssh failed' }), 3);
+  assert.deepEqual(e.sites[A_ID].unavailable, []);
+});
+
 test('endListing: whatever did not answer becomes an error', () => {
   const e = S.newState(); S.listingLine(e, LIST, 1); S.listingLine(e, A, 2); S.endListing(e, 9);
   assert.equal(e.listing, false); assert.equal(e.checked, 9);

@@ -79,8 +79,11 @@ DBH=\$(wp config get DB_HOST --format=json)
 DBP=\$(wp config get table_prefix --format=json)
 WP=\$(wp core version)
 CORE=\$(wp core check-update --force-check --format=json)
-PLUGINS=\$(wp plugin list --update=available --fields=name,status,version,update_version --format=json)
-THEMES=\$(wp theme list --update=available --fields=name,status,version,update_version --format=json)
+# Every plugin and theme with its update status, and what the new version needs. WP-CLI before 2.10
+# has no requires fields ("Invalid field"): then only the available updates, as before
+F=name,status,update,version,update_version
+PLUGINS=\$(wp plugin list --fields=\$F,requires,requires_php --format=json 2>/dev/null) || PLUGINS=\$(wp plugin list --update=available --fields=\$F --format=json)
+THEMES=\$(wp theme list --fields=\$F,requires,requires_php --format=json 2>/dev/null) || THEMES=\$(wp theme list --update=available --fields=\$F --format=json)
 echo "{\"site\":\"$ID\",\"url\":\$URL,\"db\":{\"name\":\$DBN,\"host\":\$DBH,\"prefix\":\$DBP},\"wp\":\"\$WP\",\"exclude\":$EXCL_JSON,\"core\":\${CORE:-[]},\"plugins\":\${PLUGINS:-[]},\"themes\":\${THEMES:-[]}}"
 EOF
   done

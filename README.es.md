@@ -140,7 +140,8 @@ Puedes agregar todos los servidores que quieras. "Update all" los abarca a todos
 ## Uso diario
 
 - **Check for updates** le pregunta a cada servidor qué hay pendiente. También corre solo cuando arranca la herramienta, cuando cambias la configuración y después de cada actualización.
-- Haz clic en un sitio para ver qué tiene pendiente: su versión actual y la nueva.
+- Al lado de la dirección de cada sitio ves su versión de WordPress. Haz clic en un sitio para ver qué tiene pendiente: su versión actual y la nueva.
+- **Can't update here**, debajo de los pendientes de un sitio, lista las actualizaciones que este servidor no puede aplicar, con el motivo, como "Needs PHP 8.3": la versión nueva necesita un WordPress o un PHP más nuevo que el del sitio. No cuentan como pendientes y la herramienta las saltea.
 - **Update** actualiza ese sitio. **Update all** actualiza todos los sitios con actualizaciones pendientes, uno detrás de otro, en todos los servidores. Primero se respalda cada sitio y después se actualizan WordPress, plugins, temas y traducciones.
 - Puedes cerrar la página mientras corre: la actualización sigue. Vuelve a abrir la página para ver el progreso y el registro en vivo.
 - Un sitio marcado **Check** necesita que lo mires: su actualización falló o su página no cargó después. El motivo aparece al lado. Puedes actualizarlo de nuevo con su propio botón **Update**.
@@ -249,6 +250,8 @@ docker compose exec app ssh-keygen -R '[example.com]:65002' -f /ssh/known_hosts
 ```
 
 Si no sabes por qué cambió, pregúntale a tu hosting antes de hacerlo: también puede significar que alguien se metió en el medio. Sin Docker, corre `ssh-keygen -R` con `-f data/ssh/known_hosts`.
+
+**"Needs PHP 8.3", pero tu sitio ya usa PHP 8.3.** WP-CLI revisa el PHP que el servidor usa por SSH, y en los hostings compartidos puede ser más viejo que el de tu sitio. Pregúntale a tu hosting cómo usar un PHP más nuevo por SSH.
 
 **"SSH rejected the key."** La clave de la herramienta todavía no está agregada en esa cuenta, o se agregó en otra. Cópiala de nuevo desde **Settings** y revisa el usuario. En cPanel, revisa que la clave esté autorizada.
 

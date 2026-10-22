@@ -38,6 +38,8 @@ done
 
 # ---- The sites. Old versions on purpose: there must be real updates to apply. Each plugin's latest
 # version must fit the image's PHP and the site's WordPress, or WP-CLI marks its update "unavailable".
+# One does it on purpose: contact-form-7's latest needs PHP 8.3 (the image has 8.2), so site2 shows an
+# update the server can't apply.
 wp() { runuser -u demo -- env HOME=/home/demo /usr/local/bin/wp "$@"; }
 # site <n> <core version> <theme:version> <plugin:version>…
 site() {
@@ -59,7 +61,7 @@ PHP
 service mariadb start
 install -d -o demo -g demo /home/demo/sites
 site 1 6.5.5  twentytwentyone:1.7   classic-editor:1.6.2 wordpress-importer:0.8 classic-widgets:0.2
-site 2 latest twentytwentytwo:1.2   classic-widgets:0.2 wordpress-importer:0.8
+site 2 latest twentytwentytwo:1.2   classic-widgets:0.2 wordpress-importer:0.8 contact-form-7:5.9
 site 3 latest twentytwentythree:1.0 akismet:5.0 classic-editor:1.6.2
 # A file copy of site1 on the same database: WP Updater must flag both and update neither
 cp -a /home/demo/sites/site1 /home/demo/sites/site1-old

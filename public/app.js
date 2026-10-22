@@ -119,13 +119,14 @@ const STEPS = { backup: 'backing up the database', files: 'copying files' };
 function rowHTML(s, canUpdate) {
   const open = opened.has(s.id);
   const updated = s.result.length ? `${s.result.length} updated` : '';
+  const cant = s.unavailable.length ? ` · ${s.unavailable.length} can't be updated here` : '';
   let summary = '', cls, text;
   switch (s.status) {
     case 'checking': cls = 'st-gray st-checking'; text = 'Checking…'; break;
-    case 'up-to-date': cls = 'st-ok'; text = 'Up to date'; summary = updated || 'Nothing pending'; break;
+    case 'up-to-date': cls = 'st-ok'; text = 'Up to date'; summary = (updated || 'Nothing pending') + cant; break;
     case 'pending':
       cls = 'st-blue'; text = `${s.pending.length} pending`;
-      summary = esc(names(s.pending));
+      summary = esc(names(s.pending)) + cant;
       break;
     case 'queued': cls = 'st-gray'; text = 'Queued'; summary = 'Waiting for its turn'; break;
     case 'updating': {
@@ -145,7 +146,7 @@ function rowHTML(s, canUpdate) {
     <div class="row">
       <button class="toggle" type="button" aria-expanded="${open}" data-toggle="${esc(s.id)}">
         <span class="name">
-          <span class="domain">${esc(s.url || s.path)}</span>
+          <span class="title"><span class="domain">${esc(s.url || s.path)}</span>${s.wp ? `<span class="badge">WP ${esc(s.wp)}</span>` : ''}</span>
           <span class="summary${failed ? ' error' : ''}">${summary}</span>
         </span>
         <span class="site-status ${cls}"><i class="dot"></i>${text}</span>
@@ -172,6 +173,14 @@ function detailsHTML(s) {
       <tr><th>Type</th><th>Name</th><th>Status</th><th>Current</th><th>New</th></tr>
       ${s.pending.map(i => row(i, false)).join('')}${s.skipped.map(i => row(i, true)).join('')}
     </table></div><p class="note">+ translations, if any</p></div>`);
+  }
+  // Updates WP-CLI won't apply: the new version needs a newer WordPress or PHP than this site has
+  if (s.unavailable.length) {
+    parts.push(`<div><h3>Can't update here</h3><div class="table"><table>
+      <tr><th>Type</th><th>Name</th><th>Current</th><th>New</th><th>Why</th></tr>
+      ${s.unavailable.map(i => `<tr><td>${TYPES[i.type] || esc(i.type)}</td><td>${esc(i.name)}</td><td class="version">${esc(i.current)}</td>
+        <td class="version">${esc(i.next)}</td><td>${i.needs ? `Needs ${esc(i.needs)}` : 'Not available on this server'}</td></tr>`).join('')}
+    </table></div></div>`);
   }
   if (!parts.length) parts.push(`<p class="note">${s.reason ? esc(s.reason) : 'Nothing pending.'}</p>`);
   return parts.join('');
