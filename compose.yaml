@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    init: true   # reaps the update runner, which runs detached from the bridge
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WPU_PORT:-8787}:8787"   # this computer only, never the network
+    environment:
+      WPU_PUBLIC_PORT: ${WPU_PORT:-8787}     # the port the browser uses, for the Host and Origin checks
+    volumes:
+      - ./data:/app/data
+      - ssh:/ssh
+
+volumes:
+  ssh: {}
