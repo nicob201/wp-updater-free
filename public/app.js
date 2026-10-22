@@ -7,6 +7,7 @@ let connected = false;
 let needsLog = true;
 let logLines = [];
 let editing = null;         // id of the server in the form; null for a new one
+const picked = new Set();   // sites chosen in the backup panel
 let saving = Promise.resolve();
 
 // Same patterns as lib/config.js, for instant feedback: the bridge checks everything again
@@ -115,6 +116,11 @@ function names(items) {
 }
 
 const STEPS = { backup: 'backing up the database', files: 'copying files' };
+const BACKUP_STEPS = { database: STEPS.backup, files: STEPS.files };
+// What updater.sh says when a copy fails, in plain words (the live log has the details)
+const BACKUP_REASONS = { 'backup failed (database)': "couldn't copy the database", 'backup failed (files)': "couldn't copy the files",
+                         'backup failed (address)': "couldn't read the site's address" };
+const backupReason = b => esc(BACKUP_REASONS[b.reason] || b.reason);
 
 function rowHTML(s, canUpdate) {
   const open = opened.has(s.id);
@@ -140,14 +146,22 @@ function rowHTML(s, canUpdate) {
     case 'duplicate': cls = 'st-err'; text = 'Duplicate'; summary = esc(s.reason); break;
     default: cls = 'st-err'; text = 'Error'; summary = esc(s.reason);
   }
-  const failed = ['review', 'error', 'duplicate'].includes(s.status);
+  let failed = ['review', 'error', 'duplicate'].includes(s.status);
+  // During a backup the status column shows the copy; the update status comes back when it ends
+  const b = state.run?.active && state.run.kind === 'backup' ? s.backup : null;
+  if (b?.status === 'queued') [cls, text, summary] = ['st-gray', 'Queued', 'Waiting for its turn'];
+  else if (b?.status === 'copying') [cls, text, summary] = ['st-run', 'Backing up', BACKUP_STEPS[b.step] || 'preparing'];
+  else if (b?.status === 'done') [cls, text] = ['st-ok', 'Backed up'];
+  else if (b?.status === 'failed') [cls, text, summary, failed] = ['st-err', 'Backup failed', backupReason(b), true];
+  // Afterwards a failed copy stays in view until the next backup
+  const backupFailed = !b && s.backup?.status === 'failed' ? `<span class="summary error">Backup failed: ${backupReason(s.backup)}</span>` : '';
   const can = canUpdate && s.pending.length > 0 && (s.status === 'pending' || s.status === 'review');
   return `
     <div class="row">
       <button class="toggle" type="button" aria-expanded="${open}" data-toggle="${esc(s.id)}">
         <span class="name">
           <span class="title"><span class="domain">${esc(s.url || s.path)}</span>${s.wp ? `<span class="badge">WP ${esc(s.wp)}</span>` : ''}</span>
-          <span class="summary${failed ? ' error' : ''}">${summary}</span>
+          <span class="summary${failed ? ' error' : ''}">${summary}</span>${backupFailed}
         </span>
         <span class="site-status ${cls}"><i class="dot"></i>${text}</span>
         ${CHEVRON}
@@ -226,25 +240,35 @@ function drawList(sites, canUpdate) {
 
 function drawProgress(r) {
   const box = $('progress');
+  const backup = r?.kind === 'backup';
   $('notice').hidden = !r?.interrupted;
+  $('notice').textContent = `The last ${backup ? 'backup' : 'update'} stopped before finishing. Check the log.`;
   box.hidden = !r || r.interrupted;
   if (box.hidden) return;
   const total = r.sites.length;
   const current = r.current && state.sites[r.current];
-  const finished = r.sites.filter(id => ['done', 'review'].includes(state.sites[id]?.status)).length;
+  const ended = s => (backup ? ['done', 'failed'].includes(s?.backup?.status) : ['done', 'review'].includes(s?.status));
+  const finished = r.sites.filter(id => ended(state.sites[id])).length;
   box.classList.toggle('finished', !r.active);
   box.classList.toggle('failed', !r.active && !!r.code);
 
   if (r.active) {
-    $('progress-title').textContent = r.n ? `Updating ${r.n} of ${total}` : 'Preparing the update…';
+    $('progress-title').textContent = r.n ? `${backup ? 'Backing up' : 'Updating'} ${r.n} of ${total}`
+      : backup ? 'Preparing the backup…' : 'Preparing the update…';
     $('progress-detail').textContent = r.current ? `now: ${current?.url || r.current}` : '';
-    const partial = r.n ? (r.n - 1 + (current?.progress || 0)) / total : 0;
+    const partial = r.n ? (r.n - 1 + (backup ? 0 : current?.progress || 0)) / total : 0;
     $('progress-bar').style.width = `${Math.max(2, Math.round(partial * 100))}%`;
     if (r.durations.length) {
       const avg = r.durations.reduce((a, b) => a + b, 0) / r.durations.length;
       const min = Math.round((avg * (total - finished)) / 60000);
       $('progress-left').textContent = min < 1 ? '≈ less than 1 min' : `≈ ${min} min left`;
     } else $('progress-left').textContent = '';
+  } else if (backup) {
+    const failed = r.sites.filter(id => state.sites[id]?.backup?.status === 'failed').length;
+    $('progress-title').textContent = `Done: ${r.done.length} of ${total} backed up`;
+    $('progress-detail').textContent = failed ? `${failed} failed.` : r.code ? `The backup ended with an error (code ${r.code}): see the log.` : '';
+    $('progress-left').textContent = '';
+    $('progress-bar').style.width = '100%';
   } else {
     const toCheck = r.sites.filter(id => ['review', 'error'].includes(state.sites[id]?.status)).length;
     $('progress-title').textContent = `Done: ${r.done.length} of ${total} updated`;
@@ -270,7 +294,80 @@ function renderSites() {
   $('excluded').firstElementChild.textContent = `${plural(excluded, 'site', 'sites')} excluded`;
 
   drawProgress(r);
+  drawBackups(sites, canUpdate);
   drawList(sites, canUpdate);
+}
+
+// ---- Full backups ----
+
+// Decimal units, the ones disks and hosts show
+function size(n) {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  return `${Math.max(1, Math.round(n / 1e3))} KB`;
+}
+const day = iso => new Date(iso).toLocaleDateString();
+
+// Why a site can't be copied, or '' (the bridge checks the same)
+function cantBackUp(s) {
+  const st = state.servers[s.server] || {};
+  if (s.status === 'error' || !s.url) return "Couldn't check this site.";
+  if (st.ssh === false) return "Can't connect to this server.";
+  if (st.rsync === false) return 'rsync is missing on this server.';
+  return s.backupNote || '';
+}
+
+// Only informs: never reads as a warning for someone who doesn't make copies
+function backupsText(sites) {
+  const dates = sites.filter(s => s.lastFull).map(s => s.lastFull.date).sort();
+  if (!dates.length) return 'No full backups yet. You can make one whenever you want.';
+  const never = sites.length - dates.length;
+  return `Oldest full backup: ${day(dates[0])}${never ? ` · ${never} never backed up` : ''}`;
+}
+
+function backupListHTML(sites) {
+  return sites.map(s => {
+    const why = cantBackUp(s);
+    const main = `<span class="item-main"><span class="domain">${esc(s.url || s.path)}</span>${why ? `<span class="mono muted">${esc(why)}</span>` : ''}</span>`;
+    const last = `<span class="backup-last">${s.lastFull ? esc(day(s.lastFull.date)) : 'never'}</span>`;
+    if (why) return `<div class="item off"><span class="no-check"></span>${main}<span class="backup-size"></span>${last}</div>`;
+    const sz = s.size?.status === 'done' ? `about ${size(s.size.bytes)}` : s.size?.status === 'error' ? 'unknown' : 'measuring…';
+    return `<label class="item"><input type="checkbox" data-backup="${esc(s.id)}">${main}<span class="backup-size">${sz}</span>${last}</label>`;
+  }).join('') || '<p class="help">No sites to back up.</p>';
+}
+
+function backupTotal(chosen) {
+  if (!chosen.length) return '';
+  const known = chosen.filter(s => s.size?.status === 'done');
+  const waiting = chosen.some(s => !s.size || s.size.status === 'measuring') ? ' (still measuring)' : '';
+  let t = `A full copy of ${plural(chosen.length, 'site', 'sites')}`;
+  t += known.length ? `: about ${size(known.reduce((a, s) => a + s.size.bytes, 0))}${waiting} on this computer` : waiting;
+  t += '. The first copy of a site takes the longest.';
+  // Without hardlinks the new copy can't share the unchanged files with the previous one until it replaces it
+  if (!state.hardlinks && chosen.some(s => s.lastFull)) t += " While it's copied, a site that already has a full backup needs room for both.";
+  return t;
+}
+
+function drawBackups(sites, free) {
+  const panel = $('backup-panel');
+  // Hidden while there's no server (the welcome shows) and during the first listing, before the copies are read
+  $('backups').hidden = !state.config.servers.length || (state.listing && state.checked === null);
+  if ($('backups').hidden) panel.hidden = true;
+  $('backups-text').textContent = backupsText(sites);
+  $('backup-open').disabled = !free || !sites.length;
+  $('backup-open').setAttribute('aria-expanded', String(!panel.hidden));
+  if (panel.hidden) return;
+
+  const ok = new Set(sites.filter(s => !cantBackUp(s)).map(s => s.id));
+  for (const id of picked) if (!ok.has(id)) picked.delete(id);
+  const list = $('backup-list');
+  setHTML(list, backupListHTML(sites));
+  for (const box of list.querySelectorAll('[data-backup]')) box.checked = picked.has(box.dataset.backup);
+  Object.assign($('backup-all'), { checked: ok.size > 0 && picked.size === ok.size, indeterminate: picked.size > 0 && picked.size < ok.size, disabled: !ok.size });
+  const chosen = sites.filter(s => picked.has(s.id));
+  $('backup-total').textContent = backupTotal(chosen);
+  $('backup-start').textContent = `Back up ${plural(chosen.length, 'site', 'sites')}`;
+  $('backup-start').disabled = !free || !chosen.length;
 }
 
 // ---- Settings view ----
@@ -315,6 +412,7 @@ function excludedSitesHTML(c) {
 function renderSettings() {
   const locked = !!state?.run?.active;
   $('locked').hidden = !locked;
+  $('locked').textContent = `Settings are locked while ${state?.run?.kind === 'backup' ? 'a backup' : 'an update'} is running.`;
   $('settings-fields').disabled = locked || !connected || !state;
   if (!state) return;
   const c = state.config;
@@ -408,6 +506,38 @@ $('sites').addEventListener('click', e => {
   if (!row) return;
   const id = row.dataset.toggle;
   opened.has(id) ? opened.delete(id) : opened.add(id);
+  render();
+});
+
+$('backup-open').addEventListener('click', async () => {
+  const panel = $('backup-panel');
+  panel.hidden = !panel.hidden;
+  picked.clear();
+  $('backup-error').textContent = '';
+  render();
+  if (panel.hidden) return;
+  // Measured only when the panel opens, so listing and updating never wait for it
+  const ids = Object.values(state.sites).filter(s => s.status !== 'excluded' && !cantBackUp(s)).map(s => s.id);
+  const r = ids.length ? await ask('/api/sizes', { sites: ids }) : {};
+  if (r.error) $('backup-error').textContent = r.error;
+});
+$('backup-cancel').addEventListener('click', () => { $('backup-panel').hidden = true; picked.clear(); render(); });
+$('backup-list').addEventListener('change', e => {
+  const id = e.target.dataset.backup;
+  if (!id) return;
+  e.target.checked ? picked.add(id) : picked.delete(id);
+  render();
+});
+$('backup-all').addEventListener('change', e => {
+  for (const box of $('backup-list').querySelectorAll('[data-backup]')) e.target.checked ? picked.add(box.dataset.backup) : picked.delete(box.dataset.backup);
+  render();
+});
+$('backup-start').addEventListener('click', async () => {
+  $('backup-error').textContent = '';
+  const r = await ask('/api/backup', { sites: [...picked] });
+  if (r.error) { $('backup-error').textContent = r.error; return; }
+  $('backup-panel').hidden = true;
+  picked.clear();
   render();
 });
 

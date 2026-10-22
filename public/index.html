@@ -48,6 +48,27 @@
     <div class="bar"><i id="progress-bar"></i></div>
   </section>
 
+  <section id="backups" class="backups" hidden>
+    <p><span class="info" aria-hidden="true">i</span><span id="backups-text"></span></p>
+    <button id="backup-open" class="button secondary small" type="button" aria-expanded="false" aria-controls="backup-panel">Back up sites…</button>
+  </section>
+
+  <section id="backup-panel" class="card" hidden aria-labelledby="backup-title">
+    <div class="card-head">
+      <h2 id="backup-title">Back up sites</h2>
+      <label class="check"><input id="backup-all" type="checkbox"> Select all</label>
+    </div>
+    <div id="backup-list" class="items"></div>
+    <p id="backup-total" class="help" aria-live="polite"></p>
+    <p id="backup-error" class="error-text" aria-live="polite"></p>
+    <div class="card-row">
+      <span class="form-buttons">
+        <button id="backup-cancel" class="button secondary small" type="button">Cancel</button>
+        <button id="backup-start" class="button primary small" type="button" disabled>Back up 0 sites</button>
+      </span>
+    </div>
+  </section>
+
   <div id="sites" class="groups"></div>
   <p id="excluded" class="excluded" hidden><span></span> · <a href="#settings">Manage in Settings</a></p>
 

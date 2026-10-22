@@ -112,6 +112,17 @@ a.button { display: inline-flex; align-items: center; text-decoration: none; }
 .progress.finished .bar i { background: var(--green); }
 .progress.failed .bar i { background: var(--red); }
 
+/* ---- Full backups: a gray line, never a warning ---- */
+
+.backups { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 8px 12px 8px 16px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; }
+.backups p { display: flex; align-items: center; gap: 10px; margin: 0; }
+.info { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--border-strong); border-radius: 50%; font: 500 11px/1 var(--mono); }
+.backup-size { width: 110px; color: var(--muted); font: 12px var(--mono); }
+.backup-last { width: 90px; color: var(--muted); font-size: 13px; text-align: right; }
+.item.off { cursor: default; }
+.item.off .domain, .item.off .backup-last { color: var(--dim); }
+.no-check { flex: none; width: 16px; }   /* where the checkbox would be: addresses stay aligned */
+
 /* ---- Site list: one card per server ---- */
 
 .groups { display: grid; gap: 16px; }
@@ -275,6 +286,11 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
 @media (max-width: 560px) {
   .nav .indicator > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .fields { grid-template-columns: minmax(0, 1fr); }
+  /* Backup panel: size and last copy go under the address */
+  #backup-list .item { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px 16px; }
+  #backup-list .item-main { grid-column: 2 / -1; }
+  #backup-list .backup-size { grid-column: 2; width: auto; }
+  #backup-list .backup-last { width: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
