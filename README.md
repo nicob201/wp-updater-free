@@ -16,6 +16,7 @@ WP Updater is a free tool that runs on your computer and keeps all your WordPres
 ## Safety
 
 - **A verified database backup before each site.** If the backup fails or comes out incomplete, that site is not updated.
+- **Full backups, whenever you want:** a copy of the whole site on your computer, its database and all its files. You choose when and which sites, from **Sites**.
 - **Excluded plugins, themes and sites** are never updated.
 - **Duplicates are never updated.** Two installs that share a database or an address are flagged, and neither is updated until you exclude one. Updating a copy would upgrade the live site's database.
 - **It never runs as root.** Files written by root end up owned by root, and then WordPress can't update or write them, so the site breaks. If the server account is root, "Test connection" refuses it.
@@ -141,8 +142,9 @@ You can add as many servers as you want. "Update all" covers all of them.
 - **Check for updates** asks every server what's pending. It also runs on its own when the tool starts, when you change the settings and after each update.
 - Next to each site's address you see its WordPress version. Click a site to see what's pending: its current and new version.
 - **Can't update here**, under a site's pending updates, lists the ones this server can't apply, with the reason, like "Needs PHP 8.3": the new version needs a newer WordPress or PHP than the site has. They don't count as pending and the tool skips them.
-- **Update** updates that site. **Update all** updates every site with updates pending, one after another, on every server. Each site is backed up first, then WordPress, plugins, themes and translations are updated.
+- **Update** updates that site. **Update all** updates every site with updates pending, one after another, on every server. Each site's database is backed up first, then WordPress, plugins, themes and translations are updated.
 - You can close the page while it runs: the update keeps going. Open the page again to see the progress and the live log.
+- **Full backups:** the gray line above your sites says when you made the last one. **Back up sites…** opens a list: tick the sites, see how much room they take on your computer and click **Back up**. It runs in the background like an update, and nothing changes on the sites. A site that can't be backed up says why.
 - A site marked **Check** needs a look: its update failed, or its page didn't load afterwards. The reason is next to it. You can update it again with its own **Update** button.
 - **Excluded plugins & themes** (in **Settings**): add a plugin or theme by its slug, the name of its folder, like `elementor-pro`. It's never updated on any site, and it still shows in each site's list, marked as excluded. Nothing is excluded until you add it.
 - **Excluded sites** (in **Settings**): tick **Exclude** to leave a site out. It's never checked nor updated, and nothing runs on it.
@@ -156,9 +158,13 @@ Backups live on your computer, in the `data/backups` folder, one folder per serv
 data/backups/<user>@<host>/<site address>/
   database.sql.gz        the database, from before the last update
   versions-before.txt    plugin and theme versions before the update
+  full-backup/           the last full backup, from Back up sites…
+    database.sql.gz      its database
+    files/               all the site's files, without the UpdraftPlus and WPvivid backup folders
+    backup.json          when it was made and how big it is
 ```
 
-Only the latest backup of each site is kept: each update replaces it. Folders named `files/` from older versions can be deleted.
+Only the latest backup of each site is kept: each update replaces the database backup, and each full backup replaces the previous one, but only once the new one is complete. If a full backup fails, the previous one stays. Folders named `files/` next to `full-backup/` come from older versions and can be deleted.
 
 To undo a single plugin, you don't need a full restore. Log in to the server, go to the site's folder and install the old version listed in `versions-before.txt`:
 
@@ -170,21 +176,21 @@ To restore a whole site, run these commands in the `wp-updater-free` folder. The
 
 ### Restore the files
 
-This replaces the site's files with the backup and deletes files that aren't in it. It keeps the server's `wp-config.php`.
+This replaces the site's files with the ones in its full backup and deletes files that aren't in it. It keeps the server's `wp-config.php`.
 
 ```sh
 docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups \
   -e "ssh -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -p 22" \
-  data/backups/demo@demo/site1.demo/files/ demo@demo:/home/demo/sites/site1/
+  data/backups/demo@demo/site1.demo/full-backup/files/ demo@demo:/home/demo/sites/site1/
 ```
 
 ### Restore the database
 
-1. Upload the backup to the server's home folder:
+1. Upload the backup to the server's home folder. With the files of a full backup, use its database, `full-backup/database.sql.gz`. To undo the last update, use `database.sql.gz`, the one from before it:
 
    ```sh
    docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
-     data/backups/demo@demo/site1.demo/database.sql.gz demo@demo:restore.sql.gz
+     data/backups/demo@demo/site1.demo/full-backup/database.sql.gz demo@demo:restore.sql.gz
    ```
 
 2. Log in to the server:
@@ -261,7 +267,9 @@ chmod +x wp-cli.phar
 sudo mv wp-cli.phar /usr/local/bin/wp
 ```
 
-**"Can't write to the data folder."** Settings can't be saved and updates can't start, because the tool can't write to `data/`.
+**"rsync is missing on this server."** Full backups copy the files with rsync, and this server doesn't have it. Updates still work. On a VPS, install it (`sudo apt install rsync` on Debian and Ubuntu). On a shared host, ask your host.
+
+**"Can't write to the data folder."** Settings can't be saved and updates and backups can't start, because the tool can't write to `data/`.
 
 - On Linux, the tool writes as user id 1000. If your user has another id (check with `id -u`), give the folder to that id: `sudo chown -R 1000:1000 data`.
 - On macOS with Colima, keep the `wp-updater-free` folder inside your home folder.

@@ -16,6 +16,7 @@ WP Updater es una herramienta gratuita que corre en tu computadora y mantiene al
 ## Seguridad
 
 - **Una copia verificada de la base de datos antes de cada sitio.** Si la copia falla o sale incompleta, ese sitio no se actualiza.
+- **Copias completas, cuando quieras:** una copia del sitio entero en tu computadora, su base de datos y todos sus archivos. Tú eliges cuándo y qué sitios, desde **Sites**.
 - **Los plugins, temas y sitios excluidos** nunca se actualizan.
 - **Los duplicados nunca se actualizan.** Dos instalaciones que comparten base de datos o dirección quedan marcadas, y ninguna se actualiza hasta que excluyas una. Actualizar una copia actualizaría la base de datos del sitio en vivo.
 - **Nunca corre como root.** Los archivos que escribe root quedan a nombre de root, y entonces WordPress no puede actualizarlos ni escribirlos, y el sitio se rompe. Si la cuenta del servidor es root, "Test connection" la rechaza.
@@ -141,8 +142,9 @@ Puedes agregar todos los servidores que quieras. "Update all" los abarca a todos
 - **Check for updates** le pregunta a cada servidor qué hay pendiente. También corre solo cuando arranca la herramienta, cuando cambias la configuración y después de cada actualización.
 - Al lado de la dirección de cada sitio ves su versión de WordPress. Haz clic en un sitio para ver qué tiene pendiente: su versión actual y la nueva.
 - **Can't update here**, debajo de los pendientes de un sitio, lista las actualizaciones que este servidor no puede aplicar, con el motivo, como "Needs PHP 8.3": la versión nueva necesita un WordPress o un PHP más nuevo que el del sitio. No cuentan como pendientes y la herramienta las saltea.
-- **Update** actualiza ese sitio. **Update all** actualiza todos los sitios con actualizaciones pendientes, uno detrás de otro, en todos los servidores. Primero se respalda cada sitio y después se actualizan WordPress, plugins, temas y traducciones.
+- **Update** actualiza ese sitio. **Update all** actualiza todos los sitios con actualizaciones pendientes, uno detrás de otro, en todos los servidores. Primero se respalda la base de datos de cada sitio y después se actualizan WordPress, plugins, temas y traducciones.
 - Puedes cerrar la página mientras corre: la actualización sigue. Vuelve a abrir la página para ver el progreso y el registro en vivo.
+- **Copias completas:** la línea gris arriba de tus sitios dice cuándo hiciste la última. **Back up sites…** abre una lista: marca los sitios, mira cuánto lugar ocupan en tu computadora y haz clic en **Back up**. Corre de fondo como una actualización, y no cambia nada en los sitios. Si un sitio no se puede copiar, dice por qué.
 - Un sitio marcado **Check** necesita que lo mires: su actualización falló o su página no cargó después. El motivo aparece al lado. Puedes actualizarlo de nuevo con su propio botón **Update**.
 - **Excluded plugins & themes** (en **Settings**): agrega un plugin o tema por su slug, el nombre de su carpeta, como `elementor-pro`. Nunca se actualiza en ningún sitio, y sigue apareciendo en la lista de cada sitio, marcado como excluido. No hay nada excluido hasta que lo agregues.
 - **Excluded sites** (en **Settings**): marca **Exclude** para dejar afuera un sitio. Nunca se revisa ni se actualiza, y no se corre nada en él.
@@ -156,9 +158,13 @@ Las copias están en tu computadora, en la carpeta `data/backups`, una carpeta p
 data/backups/<usuario>@<host>/<dirección del sitio>/
   database.sql.gz        la base de datos, de antes de la última actualización
   versions-before.txt    las versiones de plugins y temas antes de actualizar
+  full-backup/           la última copia completa, hecha con Back up sites…
+    database.sql.gz      su base de datos
+    files/               todos los archivos del sitio, sin las carpetas de copias de UpdraftPlus y WPvivid
+    backup.json          cuándo se hizo y cuánto ocupa
 ```
 
-Solo se guarda la última copia de cada sitio: cada actualización la reemplaza. Las carpetas `files/` de versiones anteriores se pueden borrar.
+Solo se guarda la última copia de cada sitio: cada actualización reemplaza la copia de la base de datos, y cada copia completa reemplaza a la anterior, pero recién cuando la nueva está completa. Si una copia completa falla, queda la anterior. Las carpetas `files/` al lado de `full-backup/` son de versiones anteriores y se pueden borrar.
 
 Para deshacer un solo plugin no hace falta restaurar todo. Entra al servidor, ve a la carpeta del sitio e instala la versión vieja que figura en `versions-before.txt`:
 
@@ -170,21 +176,21 @@ Para restaurar un sitio entero, corre estos comandos en la carpeta `wp-updater-f
 
 ### Restaura los archivos
 
-Esto reemplaza los archivos del sitio por los de la copia y borra los que no están en ella. Mantiene el `wp-config.php` del servidor.
+Esto reemplaza los archivos del sitio por los de su copia completa y borra los que no están en ella. Mantiene el `wp-config.php` del servidor.
 
 ```sh
 docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups \
   -e "ssh -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -p 22" \
-  data/backups/demo@demo/site1.demo/files/ demo@demo:/home/demo/sites/site1/
+  data/backups/demo@demo/site1.demo/full-backup/files/ demo@demo:/home/demo/sites/site1/
 ```
 
 ### Restaura la base de datos
 
-1. Sube la copia a la carpeta personal del servidor:
+1. Sube la copia a la carpeta personal del servidor. Con los archivos de una copia completa, usa su base de datos, `full-backup/database.sql.gz`. Para deshacer la última actualización, usa `database.sql.gz`, la de antes de actualizar:
 
    ```sh
    docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
-     data/backups/demo@demo/site1.demo/database.sql.gz demo@demo:restore.sql.gz
+     data/backups/demo@demo/site1.demo/full-backup/database.sql.gz demo@demo:restore.sql.gz
    ```
 
 2. Entra al servidor:
@@ -261,7 +267,9 @@ chmod +x wp-cli.phar
 sudo mv wp-cli.phar /usr/local/bin/wp
 ```
 
-**"Can't write to the data folder."** No se puede guardar la configuración ni empezar una actualización, porque la herramienta no puede escribir en `data/`.
+**"rsync is missing on this server."** Las copias completas copian los archivos con rsync, y este servidor no lo tiene. Las actualizaciones funcionan igual. En un VPS, instálalo (`sudo apt install rsync` en Debian y Ubuntu). En un hosting compartido, pregúntale a tu hosting.
+
+**"Can't write to the data folder."** No se puede guardar la configuración ni empezar una actualización o una copia, porque la herramienta no puede escribir en `data/`.
 
 - En Linux, la herramienta escribe como el usuario con id 1000. Si tu usuario tiene otro id (míralo con `id -u`), dale la carpeta a ese id: `sudo chown -R 1000:1000 data`.
 - En macOS con Colima, deja la carpeta `wp-updater-free` dentro de tu carpeta personal.
