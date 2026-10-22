@@ -261,7 +261,7 @@ chmod +x wp-cli.phar
 sudo mv wp-cli.phar /usr/local/bin/wp
 ```
 
-**La configuración no se guarda, o la página dice "No connection with the local server" al guardar.** La herramienta no puede escribir en `data/`.
+**"Can't write to the data folder."** No se puede guardar la configuración ni empezar una actualización, porque la herramienta no puede escribir en `data/`.
 
 - En Linux, la herramienta escribe como el usuario con id 1000. Si tu usuario tiene otro id (míralo con `id -u`), dale la carpeta a ese id: `sudo chown -R 1000:1000 data`.
 - En macOS con Colima, deja la carpeta `wp-updater-free` dentro de tu carpeta personal.

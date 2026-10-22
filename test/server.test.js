@@ -149,6 +149,39 @@ test('excluded sites are never analyzed', async () => {
 
 // ---- Settings ----
 
+// Docker on Linux with another uid, or a folder Colima doesn't share: data/ exists but can't be written
+const ROOT_USER = process.getuid?.() === 0 && 'root writes anywhere';
+async function readOnly(s, fn) {
+  fs.chmodSync(s.dir, 0o555);
+  try { await fn(); } finally { fs.chmodSync(s.dir, 0o755); }
+}
+
+test("saving settings in a data folder that can't be written says so and keeps the bridge running", { skip: ROOT_USER }, async () => {
+  const s = await start();
+  await waitState(s, listed);
+  await readOnly(s, async () => {
+    const r = await s.post('/api/config', CONFIG);
+    assert.equal(r.status, 500);
+    assert.match((await r.json()).error, /can't write to the data folder/i);
+  });
+  assert.equal(s.proc.exitCode, null, 'the bridge stopped');
+  assert.equal((await s.post('/api/config', CONFIG)).status, 200);
+});
+
+test("an update in a data folder that can't be written is refused and starts nothing", { skip: ROOT_USER }, async () => {
+  const s = await start();
+  await waitState(s, listed);
+  await readOnly(s, async () => {
+    const r = await s.post('/api/update', { sites: [A] });
+    assert.equal(r.status, 500);
+    assert.match((await r.json()).error, /can't write to the data folder/i);
+  });
+  const e = await waitState(s, () => true);
+  assert.equal(e.run, null);
+  assert.equal(e.sites[A].status, 'pending');
+  assert.equal(s.proc.exitCode, null, 'the bridge stopped');
+});
+
 test('POST /api/config: 400 with a message, 200 saves and lists again', async () => {
   const s = await start();
   await waitState(s, listed);
