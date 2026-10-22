@@ -36,6 +36,13 @@ test('listing: pending core uses the current wp version', () => {
   assert.deepEqual(e.sites[A_ID].pending, [{ type:'core', name:'WordPress', active:true, current:'7.1.3', next:'7.1.4' }]);
 });
 
+// wp core check-update lists the minor update of the site's branch first, but wp core update installs the highest
+test('listing: pending core is the highest version offered, the one wp core update installs', () => {
+  const e = S.newState(); S.listingLine(e, LIST, 1);
+  S.listingLine(e, SITE(SV, 'a', { wp: '6.5.5', core: [{ version: '6.5.13', update_type: 'minor' }, { version: '7.1.3', update_type: 'major' }] }), 2);
+  assert.equal(e.sites[A_ID].pending[0].next, '7.1.3');
+});
+
 test('endListing: whatever did not answer becomes an error', () => {
   const e = S.newState(); S.listingLine(e, LIST, 1); S.listingLine(e, A, 2); S.endListing(e, 9);
   assert.equal(e.listing, false); assert.equal(e.checked, 9);
