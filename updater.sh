@@ -1,7 +1,7 @@
 #!/bin/bash
 # Lists and applies WordPress updates (core, plugins, themes, translations) on one server over SSH + WP-CLI.
 # The bridge (server.js) passes the connection in WPU_* variables.
-# Usage: updater.sh --probe           checks the connection and the server's tools: prints OK or why not
+# Usage: updater.sh --probe           checks the connection and the server's tools: prints OK (plus no-rsync) or why not
 #        updater.sh --json            finds the WordPress sites and prints what's pending as JSON lines
 #        updater.sh --apply <path>…   backs up each site and updates it
 set -eo pipefail
@@ -38,8 +38,8 @@ if [ "$MODE" = --probe ]; then
   if has uid=0; then echo 'Logged in as root. Use the account that owns the site files instead (see README).'; exit 1; fi
   has has-wp || { echo 'WP-CLI (wp) is not installed or not in the PATH on the server.'; exit 1; }
   has has-dump || { echo 'mysqldump is not available on the server.'; exit 1; }
-  [ "$WPU_FULL_BACKUP" != 1 ] || has has-rsync || { echo 'rsync is not available on the server (needed for full backups).'; exit 1; }
-  echo OK
+  # Without rsync the server still lists and updates: only full backups need it
+  echo OK; has has-rsync || echo no-rsync
   exit 0
 fi
 
@@ -132,16 +132,6 @@ EOF
   # To roll a plugin back: wp plugin install <name> --version=<the one in this file> --force
   remote "$GUARD; cd $P && wp plugin list --fields=name,status,version && wp theme list --fields=name,status,version" \
     </dev/null > "$DIR/versions-before.txt" || echo "warning: couldn't save versions-before.txt for $ID" >&2
-
-  if [ "$WPU_FULL_BACKUP" = 1 ]; then
-    echo "== $ID: copying files"
-    # The marker stays if the copy fails, so a half copy never looks like a good one.
-    # Plugins' own backup folders are skipped: they aren't needed and can weigh GBs.
-    touch "$DIR/files.incomplete"
-    rsync -az --delete --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups -e "$RSH" "$DEST:$P/" "$DIR/files/" \
-      || { echo "== $ID: file copy failed, not updated"; FAILED+=("$ID (files)"); continue; }
-    rm "$DIR/files.incomplete"
-  fi
 
   echo "== $ID: updating"
   remote "bash -s" <<EOF || { echo "== $ID: update failed"; FAILED+=("$ID (update)"); }

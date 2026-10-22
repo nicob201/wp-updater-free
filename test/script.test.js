@@ -79,6 +79,13 @@ test('--apply backs up the database, saves the versions and updates with the exc
   assert.match(r.wpLog(), /^theme update --all --exclude=elementor,elementor-pro$/m);
 });
 
+test('--apply backs up only the database, even with the old WPU_FULL_BACKUP set', () => {
+  const r = runLocal(['--apply', 'SITE'], { WPU_FULL_BACKUP: '1' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stdout, /copying files/);
+  assert.ok(!fs.existsSync(path.join(r.backup, 'files')));
+});
+
 test('--apply never updates a site whose database backup is incomplete', () => {
   const r = runLocal(['--apply', 'SITE'], { FAKE_DUMP_BAD: '1' });
   assert.equal(r.status, 1);
@@ -104,11 +111,15 @@ test('--probe explains each failure', () => {   // Review Focus 3
     [{ FAKE_OUT: 'uid=0\nhas-wp\nhas-dump\n' }, /root/],
     [{ FAKE_OUT: 'uid=1000\nhas-dump\n' }, /WP-CLI/],
     [{ FAKE_OUT: 'uid=1000\nhas-wp\n' }, /mysqldump/],
-    [{ FAKE_OUT: 'uid=1000\nhas-wp\nhas-dump\n', WPU_FULL_BACKUP: '1' }, /rsync/],
   ];
   for (const [env, msg] of cases) { const r = run(['--probe'], env); assert.equal(r.status, 1, JSON.stringify(env)); assert.match(r.stdout, msg); }
-  const ok = run(['--probe'], { FAKE_OUT: 'uid=1000\nhas-wp\nhas-dump\n' });
+  const ok = run(['--probe'], { FAKE_OUT: 'uid=1000\nhas-wp\nhas-dump\nhas-rsync\n' });
   assert.equal(ok.status, 0); assert.equal(ok.stdout.trim(), 'OK');
+});
+
+test('--probe says OK and notes a missing rsync', () => {
+  const r = run(['--probe'], { FAKE_OUT: 'uid=1000\nhas-wp\nhas-dump\n' });
+  assert.equal(r.status, 0); assert.equal(r.stdout.trim(), 'OK\nno-rsync');
 });
 
 test('--json: first line lists discovered sites; excluded and unsafe paths are not analyzed', () => {

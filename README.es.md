@@ -16,7 +16,6 @@ WP Updater es una herramienta gratuita que corre en tu computadora y mantiene al
 ## Seguridad
 
 - **Una copia verificada de la base de datos antes de cada sitio.** Si la copia falla o sale incompleta, ese sitio no se actualiza.
-- **Copia completa opcional:** también copia los archivos del sitio antes de actualizar.
 - **Los plugins, temas y sitios excluidos** nunca se actualizan.
 - **Los duplicados nunca se actualizan.** Dos instalaciones que comparten base de datos o dirección quedan marcadas, y ninguna se actualiza hasta que excluyas una. Actualizar una copia actualizaría la base de datos del sitio en vivo.
 - **Nunca corre como root.** Los archivos que escribe root quedan a nombre de root, y entonces WordPress no puede actualizarlos ni escribirlos, y el sitio se rompe. Si la cuenta del servidor es root, "Test connection" la rechaza.
@@ -148,7 +147,6 @@ Puedes agregar todos los servidores que quieras. "Update all" los abarca a todos
 - **Excluded plugins & themes** (en **Settings**): agrega un plugin o tema por su slug, el nombre de su carpeta, como `elementor-pro`. Nunca se actualiza en ningún sitio, y sigue apareciendo en la lista de cada sitio, marcado como excluido. No hay nada excluido hasta que lo agregues.
 - **Excluded sites** (en **Settings**): marca **Exclude** para dejar afuera un sitio. Nunca se revisa ni se actualiza, y no se corre nada en él.
 - **Duplicate** significa que dos instalaciones comparten la misma base de datos o la misma dirección, normalmente una copia como un staging o una carpeta vieja. Ninguna se actualiza hasta que excluyas una de las dos.
-- **Full backup** (en **Settings**): también copia todos los archivos del sitio antes de actualizar. La primera copia puede tardar y ocupar varios GB. Las siguientes solo traen lo que cambió. Si la copia falla, el sitio no se actualiza.
 
 ## Copias y restauración
 
@@ -158,10 +156,9 @@ Las copias están en tu computadora, en la carpeta `data/backups`, una carpeta p
 data/backups/<usuario>@<host>/<dirección del sitio>/
   database.sql.gz        la base de datos, de antes de la última actualización
   versions-before.txt    las versiones de plugins y temas antes de actualizar
-  files/                 los archivos del sitio (solo con Full backup)
 ```
 
-Solo se guarda la última copia de cada sitio: cada actualización la reemplaza. Si hay un archivo `files.incomplete`, la copia de archivos no terminó: no restaures desde ella.
+Solo se guarda la última copia de cada sitio: cada actualización la reemplaza. Las carpetas `files/` de versiones anteriores se pueden borrar.
 
 Para deshacer un solo plugin no hace falta restaurar todo. Entra al servidor, ve a la carpeta del sitio e instala la versión vieja que figura en `versions-before.txt`:
 

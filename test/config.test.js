@@ -9,8 +9,12 @@ test('valid config: defaults, ids, dedupe, unknown keys dropped', () => {
   assert.match(c.servers[0].id, /^[a-f0-9]{8}$/);
   assert.equal(c.servers[0].port, 22);
   assert.deepEqual(c.exclude, ['elementor']);
-  assert.deepEqual(Object.keys(c).sort(), ['exclude', 'excludedSites', 'fullBackup', 'servers']);
-  assert.equal(c.fullBackup, false);
+  assert.deepEqual(Object.keys(c).sort(), ['exclude', 'excludedSites', 'servers']);
+});
+
+test('an old config with the full backup switch still loads', () => {
+  const c = C.validate({ servers: [srv()], fullBackup: true });
+  assert.equal('fullBackup' in c, false);
 });
 
 test('rejects values that could reach ssh or bash', () => {
@@ -18,7 +22,6 @@ test('rejects values that could reach ssh or bash', () => {
                      { port: 70000 }, { port: '22a' }, { path: 'rel/dir' }, { path: '/a b' }, { path: '/x;y' }, { path: '/a/../b' }, { name: '' }])
     assert.throws(() => C.validate({ servers: [srv(bad)] }), Error, JSON.stringify(bad));
   for (const slug of ['Elementor Pro', '../x', '-x']) assert.throws(() => C.validate({ exclude: [slug] }), Error, slug);
-  assert.throws(() => C.validate({ fullBackup: 'yes' }));
   assert.throws(() => C.validate(null));
 });
 
@@ -34,8 +37,8 @@ test('excludedSites: keeps valid ids of known servers only', () => {
 
 test('load/save round trip, missing file gives defaults, file is private', () => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-')), 'config.json');
-  assert.deepEqual(C.load(f), { servers: [], exclude: [], excludedSites: [], fullBackup: false });
-  const c = C.validate({ servers: [srv()], fullBackup: true });
+  assert.deepEqual(C.load(f), { servers: [], exclude: [], excludedSites: [] });
+  const c = C.validate({ servers: [srv()] });
   C.save(f, c);
   assert.deepEqual(C.load(f), c);
   assert.equal(fs.statSync(f).mode & 0o777, 0o600);

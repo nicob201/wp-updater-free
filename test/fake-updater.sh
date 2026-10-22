@@ -1,14 +1,16 @@
 #!/bin/bash
 # Imitates updater.sh's output to test the page without touching real sites.
-# Reads WPU_SERVER, WPU_SKIP, WPU_EXCLUDE and WPU_FULL_BACKUP like the real one. Test knobs:
+# Reads WPU_SERVER, WPU_SKIP and WPU_EXCLUDE like the real one. Test knobs:
 # FAKE_SLOW: seconds between lines (0.2). FAKE_SSH=bad: no connection (like the real one: nothing, exits 255).
 # FAKE_CUT=1: --apply dies in the middle of a line, as if it were killed. FAKE_DUP=1: site c shares a's database.
+# FAKE_NO_RSYNC=1: --probe says the server has no rsync.
 L=${FAKE_SLOW:-0.2}
 S=${WPU_SERVER:-aaaaaaaa}
 EXCLUDE=${WPU_EXCLUDE-elementor,elementor-pro}
 item() { echo "{\"name\":\"$1\",\"status\":\"active\",\"version\":\"$2\",\"update_version\":\"$3\"}"; }
 case "$1" in
-  --probe) [ "$FAKE_SSH" = bad ] && { echo "Can't connect over SSH. Check the host, port and user."; exit 1; }; echo OK ;;
+  --probe) [ "$FAKE_SSH" = bad ] && { echo "Can't connect over SSH. Check the host, port and user."; exit 1; }
+           echo OK; [ -z "$FAKE_NO_RSYNC" ] || echo no-rsync ;;
   --json)
     [ "$FAKE_SSH" = bad ] && exit 255
     SKIPPED=(); TODO=()
@@ -38,9 +40,7 @@ case "$1" in
     fi
     for a in "$@"; do
       N=$((N+1)); d=$(id "$a")
-      STEPS=("===== [$N/$#] $d" "== $d: database backup")
-      [ "$WPU_FULL_BACKUP" = 1 ] && STEPS+=("== $d: copying files")
-      STEPS+=("== $d: updating" "Downloading update from https://downloads.wordpress.org/plugin/woocommerce.11.2.1.zip..."
+      STEPS=("===== [$N/$#] $d" "== $d: database backup" "== $d: updating" "Downloading update from https://downloads.wordpress.org/plugin/woocommerce.11.2.1.zip..."
               "$(printf 'woocommerce\t11.2.0\t11.2.1\tUpdated')" "== $d: OK")
       for l in "${STEPS[@]}"; do echo "$l"; sleep "$L"; done
     done ;;
