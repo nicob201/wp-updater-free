@@ -322,7 +322,6 @@ function renderSettings() {
   setHTML($('server-list'), serverListHTML(c));
   setHTML($('chips'), chipsHTML(c));
   setHTML($('excluded-sites'), excludedSitesHTML(c));
-  $('full-backup').checked = c.fullBackup;
 }
 
 function formServer() {
@@ -480,10 +479,6 @@ $('chips').addEventListener('click', e => {
 $('excluded-sites').addEventListener('change', e => {
   const id = e.target.dataset.excludeSite, on = e.target.checked;
   if (id) save(c => ({ ...c, excludedSites: on ? [...c.excludedSites, id] : c.excludedSites.filter(x => x !== id) }), $('sites-error'));
-});
-$('full-backup').addEventListener('change', e => {
-  const on = e.target.checked;
-  save(c => ({ ...c, fullBackup: on }), $('backup-error'));
 });
 
 // The browser reconnects on its own if the bridge restarts

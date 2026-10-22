@@ -16,7 +16,6 @@ WP Updater is a free tool that runs on your computer and keeps all your WordPres
 ## Safety
 
 - **A verified database backup before each site.** If the backup fails or comes out incomplete, that site is not updated.
-- **Optional full backup:** it also copies the site's files before updating.
 - **Excluded plugins, themes and sites** are never updated.
 - **Duplicates are never updated.** Two installs that share a database or an address are flagged, and neither is updated until you exclude one. Updating a copy would upgrade the live site's database.
 - **It never runs as root.** Files written by root end up owned by root, and then WordPress can't update or write them, so the site breaks. If the server account is root, "Test connection" refuses it.
@@ -148,7 +147,6 @@ You can add as many servers as you want. "Update all" covers all of them.
 - **Excluded plugins & themes** (in **Settings**): add a plugin or theme by its slug, the name of its folder, like `elementor-pro`. It's never updated on any site, and it still shows in each site's list, marked as excluded. Nothing is excluded until you add it.
 - **Excluded sites** (in **Settings**): tick **Exclude** to leave a site out. It's never checked nor updated, and nothing runs on it.
 - **Duplicate** means that two installs share the same database or the same address, usually a copy like a staging or old folder. Neither is updated until you exclude one of them.
-- **Full backup** (in **Settings**): it also copies all the site's files before updating. The first copy can take a while and use several GB. Later copies only bring what changed. If the copy fails, the site is not updated.
 
 ## Backups and restore
 
@@ -158,10 +156,9 @@ Backups live on your computer, in the `data/backups` folder, one folder per serv
 data/backups/<user>@<host>/<site address>/
   database.sql.gz        the database, from before the last update
   versions-before.txt    plugin and theme versions before the update
-  files/                 the site's files (only with Full backup)
 ```
 
-Only the latest backup of each site is kept: each update replaces it. If a `files.incomplete` file is there, the file copy didn't finish: don't restore from it.
+Only the latest backup of each site is kept: each update replaces it. Folders named `files/` from older versions can be deleted.
 
 To undo a single plugin, you don't need a full restore. Log in to the server, go to the site's folder and install the old version listed in `versions-before.txt`:
 

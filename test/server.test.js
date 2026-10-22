@@ -215,6 +215,14 @@ test('POST /api/test reports the probe result', async () => {
   assert.equal(bad.ok, false); assert.match(bad.message, /connect/);
 });
 
+test('POST /api/test says OK and warns when rsync is missing', async () => {
+  const s = await start({ FAKE_NO_RSYNC: '1' });
+  const r = await (await s.post('/api/test', { host: 'new.test', port: 22, user: 'u' })).json();
+  assert.equal(r.ok, true); assert.match(r.message, /rsync is missing/);
+  const e = await waitState(s, e => e.servers.aaaaaaaa.ssh === true);
+  assert.equal(e.servers.aaaaaaaa.rsync, false);
+});
+
 // ---- Updates ----
 
 test('updates, ends done and lists again', async () => {
@@ -234,12 +242,6 @@ test('one update covers two servers', async () => {
   assert.equal(e.sites['aaaaaaaa:/sites/a'].result.length, 1); assert.equal(e.sites['bbbbbbbb:/sites/a'].result.length, 1);
 });
 
-test('the full backup setting reaches the script', async () => {
-  const s = await start({}, { ...CONFIG, fullBackup: true }); await waitState(s, listed);
-  await s.post('/api/update', { sites: [A] });
-  await waitState(s, e => e.run?.code === 0);
-  assert.match(fs.readFileSync(path.join(s.dir, 'last-run.log'), 'utf8'), /: copying files/);
-});
 
 test('validates sites', async () => {
   const s = await start(); await waitState(s, listed);

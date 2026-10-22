@@ -46,7 +46,7 @@ function applyConfig(c) {
   config = c;
   state.config = c;
   const servers = {};
-  for (const s of c.servers) servers[s.id] = state.servers[s.id] || { ssh: null, message: null };
+  for (const s of c.servers) servers[s.id] = state.servers[s.id] || { ssh: null, message: null, rsync: null };
   state.servers = servers;
 }
 
@@ -55,7 +55,7 @@ function envFor(srv) {
   const skip = config.excludedSites.filter(id => id.startsWith(`${srv.id}:`)).map(id => id.slice(9));
   return { WPU_SERVER: srv.id, WPU_HOST: srv.host, WPU_PORT: String(srv.port), WPU_USER: srv.user, WPU_PATH: srv.path,
            WPU_KEY: KEY, WPU_KNOWN_HOSTS: path.join(SSH_DIR, 'known_hosts'), WPU_EXCLUDE: config.exclude.join(','),
-           WPU_SKIP: skip.join(':'), WPU_BACKUPS: path.join(DATA, 'backups'), WPU_FULL_BACKUP: config.fullBackup ? '1' : '' };
+           WPU_SKIP: skip.join(':'), WPU_BACKUPS: path.join(DATA, 'backups') };
 }
 
 // ---- Live events (Server-Sent Events) ----
@@ -116,16 +116,17 @@ function list({ clearReview = false, restart = false } = {}) {
   return true;
 }
 
+// rsync is only known when the probe got through: without a connection it stays null
 function probe(srv, done) {
   execFile('bash', [SCRIPT, '--probe'], { cwd: path.dirname(SCRIPT), timeout: 20000, env: { ...process.env, ...envFor(srv) } },
-    (err, stdout) => done(!err, err ? (String(stdout).trim() || 'No response') : null));
+    (err, stdout) => err ? done(false, String(stdout).trim() || 'No response', null) : done(true, null, !/^no-rsync$/m.test(stdout)));
 }
 
 function probeAll() {
-  for (const srv of config.servers) probe(srv, (ssh, message) => {
+  for (const srv of config.servers) probe(srv, (ssh, message, rsync) => {
     if (!config.servers.includes(srv)) return;   // settings changed meanwhile: a newer probe is coming
     const st = state.servers[srv.id];
-    if (st.ssh !== ssh || st.message !== message) { Object.assign(st, { ssh, message }); changed(); }
+    if (st.ssh !== ssh || st.message !== message || st.rsync !== rsync) { Object.assign(st, { ssh, message, rsync }); changed(); }
   });
 }
 
@@ -240,7 +241,8 @@ function testServer(res, body) {
   let srv;
   try { [srv] = C.validate({ servers: [{ ...body, name: 'test', id: '00000000' }] }).servers; }
   catch (err) { return json(res, 400, { error: err.message }); }
-  probe(srv, (ok, message) => json(res, 200, { ok, message: ok ? 'OK' : message }));
+  probe(srv, (ok, message, rsync) =>
+    json(res, 200, { ok, message: !ok ? message : rsync ? 'OK' : "OK, but rsync is missing: full backups won't work on this server." }));
 }
 
 // ---- HTTP ----
