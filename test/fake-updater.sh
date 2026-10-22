@@ -32,6 +32,12 @@ case "$1" in
       sleep "$L"; echo "{\"site\":\"$S:/sites/$p\",\"url\":\"https://$p.$S.test\",\"db\":{\"name\":\"db_${DB}_$S\",\"host\":\"localhost\",\"prefix\":\"wp_\"},\"wp\":\"7.1.3\",\"exclude\":[$( [ -n "$EXCLUDE" ] && echo "\"${EXCLUDE//,/\",\"}\"")],\"core\":[],\"plugins\":[$PLUGINS],\"themes\":[$THEMES]}"
     done
     ;;
+  --sizes)
+    shift
+    for p in "$@"; do
+      B=700000000; [ "$p" = /sites/a ] && B=2400000000
+      sleep "$L"; echo "{\"site\":\"$S:$p\",\"bytes\":$B}"
+    done ;;
   --apply)
     shift; N=0
     id() { case $1 in /*) echo "$S:$1" ;; *) echo "$1" ;; esac; }   # takes site paths like the real one, or full ids
