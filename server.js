@@ -133,12 +133,13 @@ function probeAll() {
 // it keeps going. The bridge only reads the log it writes.
 function start(ids) {
   const now = Date.now();
-  S.startRun(state, ids, now);
   const groups = config.servers
     .map(srv => ({ env: envFor(srv), paths: ids.filter(id => id.startsWith(`${srv.id}:`)).map(id => id.slice(9)) }))
     .filter(g => g.paths.length);
+  // Written before the run is marked as started: if data/ can't be written, nothing has changed
   fs.writeFileSync(PLAN, JSON.stringify({ script: SCRIPT, groups }));
   fs.writeFileSync(LOG, '');   // emptied before reading: so the previous run's END isn't read again
+  S.startRun(state, ids, now);
   // The newline before END puts it on its own line even if the script dies in the middle of one
   const proc = spawn('sh', ['-c', '"$0" "$1" "$2" > "$LOG" 2>&1; c=$?; printf "\\nEND code=%s\\n" "$c" >> "$LOG"', process.execPath, RUNNER, PLAN],
     { cwd: __dirname, detached: true, stdio: 'ignore', env: { ...process.env, LOG } });
@@ -253,7 +254,11 @@ function withBody(req, res, handle) {
   req.on('end', () => {
     let data;
     try { data = JSON.parse(body); } catch { return reply(res, 400); }
-    handle(res, data);
+    // A handler that throws (data/ can't be written, say) answers 500 instead of stopping the bridge
+    try { handle(res, data); } catch (err) {
+      console.error(err);
+      json(res, 500, { error: err.syscall ? `Can't write to the data folder (${err.code}). See Troubleshooting in the README.` : err.message });
+    }
   });
 }
 

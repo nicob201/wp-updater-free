@@ -261,7 +261,7 @@ chmod +x wp-cli.phar
 sudo mv wp-cli.phar /usr/local/bin/wp
 ```
 
-**Settings aren't saved, or the page says "No connection with the local server" when you save.** The tool can't write to `data/`.
+**"Can't write to the data folder."** Settings can't be saved and updates can't start, because the tool can't write to `data/`.
 
 - On Linux, the tool writes as user id 1000. If your user has another id (check with `id -u`), give the folder to that id: `sudo chown -R 1000:1000 data`.
 - On macOS with Colima, keep the `wp-updater-free` folder inside your home folder.

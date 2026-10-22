@@ -63,7 +63,7 @@ async function act(route, body) {
   if (!r) alert(OFFLINE);
   else if (r.status === 409) alert('A check or an update is already running. Wait for it to finish.');
   else if (r.status === 400) alert('That site has nothing pending anymore. Click "Check for updates" and try again.');
-  else if (!r.ok) alert(`The local server answered ${r.status}.`);
+  else if (!r.ok) alert((await r.json().catch(() => ({}))).error || `The local server answered ${r.status}.`);
 }
 
 // Settings calls: the bridge's answer, or { error } with a message to show
