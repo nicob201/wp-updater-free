@@ -19,6 +19,13 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const TYPES = { core: 'Core', plugin: 'Plugin', theme: 'Theme' };
 const CHEVRON = '<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
 const OFFLINE = 'No connection with the local server. Start it again.';
+// The hosting only fills in its usual port and says where each value is: it isn't saved
+const HOSTINGS = {
+  hostinger: [65002, 'hPanel → Advanced → SSH Access: turn SSH on and add the key under SSH keys. The same page shows the IP (host), port and username.'],
+  cpanel: [22, 'cPanel → Security → SSH Access → Manage SSH Keys: import the key, then authorize it. Host is your domain, user is your cPanel username. Some hosts use another port or must turn on shell access first: ask yours.'],
+  siteground: [18765, "Site Tools → Devs → SSH Keys Manager: import the key. Its SSH Credentials, in the key's menu, show the host, username and port."],
+  other: [22, 'Add the key to ~/.ssh/authorized_keys of the account that owns the sites, e.g. with ssh-copy-id.'],
+};
 const ONBOARDING = `
   <div class="list onboarding">
     <h2>Connect your first server</h2>
@@ -327,11 +334,19 @@ function openForm(srv) {
   editing = srv?.id ?? null;
   form.reset();
   if (srv) for (const k of ['name', 'host', 'port', 'user', 'path']) form.elements[k].value = srv[k];
+  hostingHelp();
   $('form-title').textContent = srv ? `Edit ${srv.name}` : 'Add server';
   $('form-error').textContent = $('test-result').textContent = '';
   form.hidden = false;
   $('add-server').hidden = true;
   form.elements.name.focus();
+}
+
+function hostingHelp() {
+  const h = HOSTINGS[$('server-form').elements.hosting.value];
+  $('hosting-help').hidden = !h;
+  $('hosting-help').textContent = h?.[1] ?? '';
+  return h;
 }
 
 function closeForm() {
@@ -398,6 +413,10 @@ $('copy').addEventListener('click', () => {
 $('add-server').addEventListener('click', () => openForm(null));
 $('cancel').addEventListener('click', closeForm);
 $('server-form').addEventListener('input', () => { $('form-error').textContent = $('test-result').textContent = ''; });
+$('server-form').elements.hosting.addEventListener('change', () => {
+  const h = hostingHelp();
+  if (h) $('server-form').elements.port.value = h[0];
+});
 $('server-form').addEventListener('submit', async e => {
   e.preventDefault();
   const s = { ...formServer(), id: editing ?? undefined };

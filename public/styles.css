@@ -27,7 +27,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, input, textarea { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 [hidden] { display: none !important; }   /* .page, forms etc. set display, which would beat the attribute */
 :focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--blue); }
 .mono { font-family: var(--mono); }
@@ -203,8 +203,8 @@ tr.skipped td { color: var(--dim); }
 .error-text { margin: 0; color: var(--red); font-size: 13px; }
 .error-text:empty { display: none; }
 
-.key, .fields input, #exclude-input { width: 100%; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg); }
-.fields input, #exclude-input { height: 36px; padding: 0 12px; }
+.key, .fields input, .fields select, #exclude-input { width: 100%; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg); }
+.fields input, .fields select, #exclude-input { height: 36px; padding: 0 12px; }
 .key { display: block; padding: 10px 12px; resize: none; color: var(--muted); font: 12px/1.6 var(--mono); word-break: break-all; }
 input::placeholder { color: var(--dim); }
 :disabled { color: var(--dim); }
