@@ -208,11 +208,14 @@ function groupHeadHTML(srv, st) {
     ${st.ssh === false && st.message ? `<p class="group-error">${esc(st.message)}</p>` : ''}`;
 }
 
-// One card per server, in the order of the settings
+// The sites of each server, in the order of the settings
+const byServer = sites => state.config.servers.map(srv =>
+  ({ srv, sites: sites.filter(s => s.server === srv.id).sort((a, b) => a.id.localeCompare(b.id)) }));
+
+// One card per server
 function drawList(sites, canUpdate) {
   const list = $('sites');
-  const groups = state.config.servers.map(srv =>
-    ({ srv, sites: sites.filter(s => s.server === srv.id).sort((a, b) => a.id.localeCompare(b.id)) }));
+  const groups = byServer(sites);
   // If the set of servers or sites changed everything is rebuilt; otherwise only what changed (keeps focus)
   const order = groups.length ? groups.map(g => [g.srv.id, ...g.sites.map(s => s.id)].join(' ')).join('|') : 'none';
   if (list.dataset.order !== order) {
@@ -326,15 +329,17 @@ function backupsText(sites) {
   return `Oldest full backup: ${day(dates[0])}${never ? ` · ${never} never backed up` : ''}`;
 }
 
-// The rows; drawBackups fills in each one's size and last copy
-function backupListHTML(sites) {
-  return sites.map(s => {
+// The rows, under their server's name like in Settings; drawBackups fills in each one's size and last copy
+function backupListHTML(groups) {
+  const row = s => {
     const why = cantBackUp(s);
     const main = `<span class="item-main"><span class="domain">${esc(s.url || s.path)}</span>${why ? `<span class="mono muted">${esc(why)}</span>` : ''}</span>`;
     const box = why ? '<span class="no-check"></span>' : `<input type="checkbox" data-backup="${esc(s.id)}">`;
     const tag = why ? 'div' : 'label';
     return `<${tag} class="item${why ? ' off' : ''}" data-row="${esc(s.id)}">${box}${main}<span class="backup-size"></span><span class="backup-last"></span></${tag}>`;
-  }).join('') || '<p class="help">No sites to back up.</p>';
+  };
+  return groups.map(g => `<div class="site-group"><h3>${esc(g.srv.name)}</h3>${g.sites.map(row).join('')}</div>`).join('')
+    || '<p class="help">No sites to back up.</p>';
 }
 
 // No size yet (not measured, or the measuring couldn't start): blank, it isn't being measured
@@ -366,17 +371,19 @@ function drawBackups(sites, free) {
   $('backup-open').setAttribute('aria-expanded', String(!panel.hidden));
   if (panel.hidden) return;
 
-  const ok = new Set(sites.filter(s => !cantBackUp(s)).map(s => s.id));
+  const groups = byServer(sites).filter(g => g.sites.length);
+  const shown = groups.flatMap(g => g.sites);
+  const ok = new Set(shown.filter(s => !cantBackUp(s)).map(s => s.id));
   for (const id of picked) if (!ok.has(id)) picked.delete(id);
   const list = $('backup-list');
   // Rebuilt only when the rows change; sizes come in one by one while the user ticks, so they're filled in
   // without replacing the checkboxes (keeps focus and clicks)
-  const rows = JSON.stringify(sites.map(s => [s.id, s.url, cantBackUp(s)]));
+  const rows = JSON.stringify(groups.map(g => [g.srv.name, g.sites.map(s => [s.id, s.url, cantBackUp(s)])]));
   if (list.dataset.rows !== rows) {
     list.dataset.rows = rows;
-    list.innerHTML = backupListHTML(sites);
+    list.innerHTML = backupListHTML(groups);
   }
-  for (const s of sites) {
+  for (const s of shown) {
     const row = list.querySelector(`[data-row="${CSS.escape(s.id)}"]`);
     row.querySelector('.backup-size').textContent = sizeText(s);
     row.querySelector('.backup-last').textContent = s.lastFull ? day(s.lastFull.date) : 'never';
