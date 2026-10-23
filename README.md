@@ -186,7 +186,14 @@ docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /w
 
 ### Restore the database
 
-1. Upload the backup to the server's home folder. With the files of a full backup, use its database, `full-backup/database.sql.gz`. To undo the last update, use `database.sql.gz`, the one from before it:
+1. Upload the backup to the server's home folder. To undo the last update, upload `database.sql.gz`, the database from before it:
+
+   ```sh
+   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
+     data/backups/demo@demo/site1.demo/database.sql.gz demo@demo:restore.sql.gz
+   ```
+
+   If you restored the files of a full backup, upload its own database instead, so both are from the same day:
 
    ```sh
    docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
