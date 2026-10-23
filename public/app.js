@@ -149,8 +149,9 @@ function rowHTML(s, canUpdate) {
   let failed = ['review', 'error', 'duplicate'].includes(s.status);
   // During a backup the status column shows the copy; the update status comes back when it ends
   const b = state.run?.active && state.run.kind === 'backup' ? s.backup : null;
-  if (b?.status === 'queued') [cls, text, summary] = ['st-gray', 'Queued', 'Waiting for its turn'];
-  else if (b?.status === 'copying') [cls, text, summary] = ['st-run', 'Backing up', BACKUP_STEPS[b.step] || 'preparing'];
+  // (a site to check or a duplicate can be copied too: its progress isn't an error)
+  if (b?.status === 'queued') [cls, text, summary, failed] = ['st-gray', 'Queued', 'Waiting for its turn', false];
+  else if (b?.status === 'copying') [cls, text, summary, failed] = ['st-run', 'Backing up', BACKUP_STEPS[b.step] || 'preparing', false];
   else if (b?.status === 'done') [cls, text] = ['st-ok', 'Backed up'];
   else if (b?.status === 'failed') [cls, text, summary, failed] = ['st-err', 'Backup failed', backupReason(b), true];
   // Afterwards a failed copy stays in view until the next backup
