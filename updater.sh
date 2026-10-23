@@ -157,7 +157,7 @@ if [ "$MODE" = --backup ]; then
   # Absolute, because rsync reads --link-dest relative to the folder it copies into
   mkdir -p "$WPU_BACKUPS"; WPU_BACKUPS=$(cd "$WPU_BACKUPS" && pwd)
   # Unchanged files are hardlinked to the previous copy, so they take no room twice. Where hardlinks
-  # don't work (a Windows bind mount), rsync copies them from the previous copy instead
+  # don't work, rsync copies them from the previous copy instead
   T="$WPU_BACKUPS/.hardlink-test"; rm -f "$T" "$T.2"; touch "$T"
   if ln "$T" "$T.2" 2>/dev/null; then LINK=--link-dest; else LINK=--copy-dest; fi
   rm -f "$T" "$T.2"
