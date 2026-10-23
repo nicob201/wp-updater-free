@@ -186,7 +186,14 @@ docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /w
 
 ### Restaura la base de datos
 
-1. Sube la copia a la carpeta personal del servidor. Con los archivos de una copia completa, usa su base de datos, `full-backup/database.sql.gz`. Para deshacer la última actualización, usa `database.sql.gz`, la de antes de actualizar:
+1. Sube la copia a la carpeta personal del servidor. Para deshacer la última actualización, sube `database.sql.gz`, la base de datos de antes de actualizar:
+
+   ```sh
+   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
+     data/backups/demo@demo/site1.demo/database.sql.gz demo@demo:restore.sql.gz
+   ```
+
+   Si restauraste los archivos de una copia completa, sube en cambio su propia base de datos, así las dos partes son del mismo día:
 
    ```sh
    docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
