@@ -331,7 +331,9 @@ function backupListHTML(sites) {
     const main = `<span class="item-main"><span class="domain">${esc(s.url || s.path)}</span>${why ? `<span class="mono muted">${esc(why)}</span>` : ''}</span>`;
     const last = `<span class="backup-last">${s.lastFull ? esc(day(s.lastFull.date)) : 'never'}</span>`;
     if (why) return `<div class="item off"><span class="no-check"></span>${main}<span class="backup-size"></span>${last}</div>`;
-    const sz = s.size?.status === 'done' ? `about ${size(s.size.bytes)}` : s.size?.status === 'error' ? 'unknown' : 'measuring…';
+    // No size yet (not measured, or the measuring couldn't start): blank, it isn't being measured
+    const st = s.size?.status;
+    const sz = st === 'done' ? `about ${size(s.size.bytes)}` : st === 'measuring' ? 'measuring…' : st === 'error' ? 'unknown' : '';
     return `<label class="item"><input type="checkbox" data-backup="${esc(s.id)}">${main}<span class="backup-size">${sz}</span>${last}</label>`;
   }).join('') || '<p class="help">No sites to back up.</p>';
 }
@@ -339,7 +341,7 @@ function backupListHTML(sites) {
 function backupTotal(chosen) {
   if (!chosen.length) return '';
   const known = chosen.filter(s => s.size?.status === 'done');
-  const waiting = chosen.some(s => !s.size || s.size.status === 'measuring') ? ' (still measuring)' : '';
+  const waiting = chosen.some(s => s.size?.status === 'measuring') ? ' (still measuring)' : '';
   let t = `A full copy of ${plural(chosen.length, 'site', 'sites')}`;
   t += known.length ? `: about ${size(known.reduce((a, s) => a + s.size.bytes, 0))}${waiting} on this computer` : waiting;
   t += '. The first copy of a site takes the longest.';
