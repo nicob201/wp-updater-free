@@ -301,10 +301,10 @@ function renderSites() {
 
 // ---- Full backups ----
 
-// Decimal units, the ones disks and hosts show
+// Decimal units, the ones disks and hosts show. A value that rounds to 1000 goes up a unit (not "1000 MB")
 function size(n) {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
-  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  if (n >= 999.5e6) return `${(n / 1e9).toFixed(1)} GB`;
+  if (n >= 999.5e3) return `${Math.round(n / 1e6)} MB`;
   return `${Math.max(1, Math.round(n / 1e3))} KB`;
 }
 const day = iso => new Date(iso).toLocaleDateString();
