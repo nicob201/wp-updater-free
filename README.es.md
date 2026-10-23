@@ -164,7 +164,7 @@ data/backups/<usuario>@<host>/<dirección del sitio>/
     backup.json          cuándo se hizo y cuánto ocupa
 ```
 
-Solo se guarda la última copia de cada sitio: cada actualización reemplaza la copia de la base de datos, y cada copia completa reemplaza a la anterior, pero recién cuando la nueva está completa. Si una copia completa falla, queda la anterior. Las carpetas `files/` al lado de `full-backup/` son de versiones anteriores y se pueden borrar.
+Solo se guarda la última copia de cada sitio: cada actualización reemplaza la copia de la base de datos, y cada copia completa reemplaza a la anterior, pero recién cuando la nueva está completa. Si una copia completa falla, queda la anterior. En Windows, cierra las ventanas del Explorador de archivos abiertas dentro de la carpeta de copias de un sitio antes de copiarlo: Windows no deja reemplazar una carpeta abierta, y la copia de ese sitio falla. Las carpetas `files/` al lado de `full-backup/` son de versiones anteriores y se pueden borrar.
 
 Para deshacer un solo plugin no hace falta restaurar todo. Entra al servidor, ve a la carpeta del sitio e instala la versión vieja que figura en `versions-before.txt`:
 

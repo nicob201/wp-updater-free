@@ -164,7 +164,7 @@ data/backups/<user>@<host>/<site address>/
     backup.json          when it was made and how big it is
 ```
 
-Only the latest backup of each site is kept: each update replaces the database backup, and each full backup replaces the previous one, but only once the new one is complete. If a full backup fails, the previous one stays. Folders named `files/` next to `full-backup/` come from older versions and can be deleted.
+Only the latest backup of each site is kept: each update replaces the database backup, and each full backup replaces the previous one, but only once the new one is complete. If a full backup fails, the previous one stays. On Windows, close any File Explorer window open inside a site's backup folder before backing it up: Windows doesn't let the tool replace a folder that's open, and that site's backup fails. Folders named `files/` next to `full-backup/` come from older versions and can be deleted.
 
 To undo a single plugin, you don't need a full restore. Log in to the server, go to the site's folder and install the old version listed in `versions-before.txt`:
 
