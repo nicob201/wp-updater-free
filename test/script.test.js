@@ -17,13 +17,15 @@ function run(args, env = {}) {
 
 // Runs the remote side for real, on this machine: a fake `ssh` executes the command locally (rsync's too),
 // and fake `wp`, `mysqldump` and `curl` answer like the real ones. FAKE_RSYNC_FAIL=1 makes rsync fail on
-// the server's side; FAKE_NO_LINKS=1 makes `ln` fail, like a folder without hardlinks
+// the server's side; FAKE_NO_LINKS=1 makes `ln` fail, like a folder without hardlinks; FAKE_LOCKED=<folder name>
+// makes `mv` of that folder fail, like Windows when a File Explorer window is open in it
 const LOCAL_BIN = {
   // GNU rsync passes user@host as -l user host
   ssh: '#!/bin/bash\nwhile [ $# -gt 0 ]; do case "$1" in -i|-p|-o|-l) shift 2 ;; *) break ;; esac; done\nshift\n'
      + '[ "$1" != rsync ] || [ -z "$FAKE_RSYNC_FAIL" ] || exit 23\n'
      + 'if [ "$*" = "bash -s" ]; then bash -s; else bash -c "$*"; fi\n',
   ln: '#!/bin/bash\n[ -z "$FAKE_NO_LINKS" ] || exit 1\nexec /bin/ln "$@"\n',
+  mv: '#!/bin/bash\n[ -z "$FAKE_LOCKED" ] || [ "${1##*/}" != "$FAKE_LOCKED" ] || { echo "mv: cannot move \'$1\': Permission denied" >&2; exit 1; }\nexec /bin/mv "$@"\n',
   wp: '#!/bin/bash\necho "$*" >> "$WP_LOG"\ncase "$*" in\n'
     + '  "option get home --format=json") echo \'"https://example.com/blog/"\' ;;\n'
     + '  "option get home") echo "https://example.com/blog/" ;;\n'
@@ -163,6 +165,21 @@ test('a failed backup keeps the previous one and leaves no half copy', () => {  
     assert.deepEqual(fs.readFileSync(full(b, 'backup.json')), before, step);
     assert.ok(fs.existsSync(full(b, 'files/wp-load.php')), step);
     assert.ok(!fs.existsSync(path.join(b.backup, 'full-backup.partial')), step);
+  }
+});
+
+// The previous copy is moved aside before the new one takes its place, or the new one can't be moved in
+test('a backup folder open in another program fails that site, keeps its previous copy, and the run goes on', () => {
+  for (const locked of ['full-backup', 'full-backup.partial']) {
+    const a = runLocal(['--backup', 'SITE']);
+    const before = fs.readFileSync(full(a, 'backup.json'));
+    const b = runLocal(['--backup', 'SITE', 'SITE'], { FAKE_LOCKED: locked }, { dir: a.dir });
+    assert.equal(b.status, 1, locked);
+    assert.equal(b.stdout.split(`== ${b.id}: backup failed (folder)\n`).length, 3, b.stdout + b.stderr);
+    assert.match(b.stdout.trim().split('\n').at(-1), /^Check: /);
+    assert.deepEqual(fs.readFileSync(full(b, 'backup.json')), before, locked);
+    assert.ok(fs.existsSync(full(b, 'files/wp-load.php')), locked);
+    assert.ok(!fs.existsSync(path.join(b.backup, 'full-backup.partial')) && !fs.existsSync(path.join(b.backup, 'full-backup.old')), locked);
   }
 });
 

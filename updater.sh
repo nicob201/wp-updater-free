@@ -171,11 +171,10 @@ if [ "$MODE" = --backup ]; then
     FULL="$DIR/full-backup"; WORK="$FULL.partial"; OLD="$FULL.old"
     # The new copy is made aside and replaces the previous one only once it's complete, so a failed or cut
     # copy never takes the place of a good one. First the leftovers of a cut one: a cut between the two
-    # renames at the end left the good copy in .old
-    rm -rf "$WORK"
-    [ -d "$FULL" ] || [ ! -d "$OLD" ] || mv "$OLD" "$FULL"
-    rm -rf "$OLD"
-    mkdir -p "$WORK"
+    # renames at the end left the good copy in .old. Windows doesn't move or delete a folder open in another
+    # program, like a File Explorer window: then only that site fails, its previous copy untouched
+    rm -rf "$WORK" && { [ -d "$FULL" ] || [ ! -d "$OLD" ] || mv "$OLD" "$FULL"; } && rm -rf "$OLD" && mkdir -p "$WORK" \
+      || { echo "== $ID: backup failed (folder)"; FAILED+=("$ID (folder)"); continue; }
 
     echo "== $ID: database backup"
     { dump "$P" "$WORK/database.sql.gz" && dumped "$WORK/database.sql.gz"; } \
@@ -186,9 +185,10 @@ if [ "$MODE" = --backup ]; then
     rsync -az --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups "${REUSE[@]}" -e "$RSH" "$DEST:$P/" "$WORK/files/" \
       && echo "{\"date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"bytes\":$(( $(du -sk "$WORK" | cut -f1) * 1024 ))}" > "$WORK/backup.json" \
       || { rm -rf "$WORK"; echo "== $ID: backup failed (files)"; FAILED+=("$ID (files)"); continue; }
-    [ ! -d "$FULL" ] || mv "$FULL" "$OLD"
-    mv "$WORK" "$FULL"
-    rm -rf "$OLD"
+    { [ ! -d "$FULL" ] || mv "$FULL" "$OLD"; } && mv "$WORK" "$FULL" \
+      || { [ -d "$FULL" ] || [ ! -d "$OLD" ] || mv "$OLD" "$FULL" || true; rm -rf "$WORK" || true
+           echo "== $ID: backup failed (folder)"; FAILED+=("$ID (folder)"); continue; }
+    rm -rf "$OLD" || true   # if part of it can't be deleted now, the next backup deletes it
     echo "== $ID: OK"
   done
   finish

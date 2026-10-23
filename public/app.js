@@ -119,7 +119,8 @@ const STEPS = { backup: 'backing up the database', files: 'copying files' };
 const BACKUP_STEPS = { database: STEPS.backup, files: STEPS.files };
 // What updater.sh says when a copy fails, in plain words (the live log has the details)
 const BACKUP_REASONS = { 'backup failed (database)': "couldn't copy the database", 'backup failed (files)': "couldn't copy the files",
-                         'backup failed (address)': "couldn't read the site's address" };
+                         'backup failed (address)': "couldn't read the site's address",
+                         'backup failed (folder)': "couldn't replace its previous backup. Close any window open in its backup folder and try again" };
 const backupReason = b => esc(BACKUP_REASONS[b.reason] || b.reason);
 
 function rowHTML(s, canUpdate) {
