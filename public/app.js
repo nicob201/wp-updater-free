@@ -325,17 +325,21 @@ function backupsText(sites) {
   return `Oldest full backup: ${day(dates[0])}${never ? ` · ${never} never backed up` : ''}`;
 }
 
+// The rows; drawBackups fills in each one's size and last copy
 function backupListHTML(sites) {
   return sites.map(s => {
     const why = cantBackUp(s);
     const main = `<span class="item-main"><span class="domain">${esc(s.url || s.path)}</span>${why ? `<span class="mono muted">${esc(why)}</span>` : ''}</span>`;
-    const last = `<span class="backup-last">${s.lastFull ? esc(day(s.lastFull.date)) : 'never'}</span>`;
-    if (why) return `<div class="item off"><span class="no-check"></span>${main}<span class="backup-size"></span>${last}</div>`;
-    // No size yet (not measured, or the measuring couldn't start): blank, it isn't being measured
-    const st = s.size?.status;
-    const sz = st === 'done' ? `about ${size(s.size.bytes)}` : st === 'measuring' ? 'measuring…' : st === 'error' ? 'unknown' : '';
-    return `<label class="item"><input type="checkbox" data-backup="${esc(s.id)}">${main}<span class="backup-size">${sz}</span>${last}</label>`;
+    const box = why ? '<span class="no-check"></span>' : `<input type="checkbox" data-backup="${esc(s.id)}">`;
+    const tag = why ? 'div' : 'label';
+    return `<${tag} class="item${why ? ' off' : ''}" data-row="${esc(s.id)}">${box}${main}<span class="backup-size"></span><span class="backup-last"></span></${tag}>`;
   }).join('') || '<p class="help">No sites to back up.</p>';
+}
+
+// No size yet (not measured, or the measuring couldn't start): blank, it isn't being measured
+function sizeText(s) {
+  const st = s.size?.status;
+  return cantBackUp(s) ? '' : st === 'done' ? `about ${size(s.size.bytes)}` : st === 'measuring' ? 'measuring…' : st === 'error' ? 'unknown' : '';
 }
 
 function backupTotal(chosen) {
@@ -363,7 +367,18 @@ function drawBackups(sites, free) {
   const ok = new Set(sites.filter(s => !cantBackUp(s)).map(s => s.id));
   for (const id of picked) if (!ok.has(id)) picked.delete(id);
   const list = $('backup-list');
-  setHTML(list, backupListHTML(sites));
+  // Rebuilt only when the rows change; sizes come in one by one while the user ticks, so they're filled in
+  // without replacing the checkboxes (keeps focus and clicks)
+  const rows = JSON.stringify(sites.map(s => [s.id, s.url, cantBackUp(s)]));
+  if (list.dataset.rows !== rows) {
+    list.dataset.rows = rows;
+    list.innerHTML = backupListHTML(sites);
+  }
+  for (const s of sites) {
+    const row = list.querySelector(`[data-row="${CSS.escape(s.id)}"]`);
+    row.querySelector('.backup-size').textContent = sizeText(s);
+    row.querySelector('.backup-last').textContent = s.lastFull ? day(s.lastFull.date) : 'never';
+  }
   for (const box of list.querySelectorAll('[data-backup]')) box.checked = picked.has(box.dataset.backup);
   Object.assign($('backup-all'), { checked: ok.size > 0 && picked.size === ok.size, indeterminate: picked.size > 0 && picked.size < ok.size, disabled: !ok.size });
   const chosen = sites.filter(s => picked.has(s.id));
