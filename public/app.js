@@ -357,8 +357,9 @@ function backupTotal(chosen) {
 
 function drawBackups(sites, free) {
   const panel = $('backup-panel');
-  // Hidden while there's no server (the welcome shows) and during the first listing, before the copies are read
-  $('backups').hidden = !state.config.servers.length || (state.listing && state.checked === null);
+  // Hidden during the first listing, before the copies are read, and while no site's address is known: the copies
+  // are found by address (no server and the welcome shows, or the bridge restarted during a run and nothing was listed yet)
+  $('backups').hidden = (state.listing && state.checked === null) || !sites.some(s => s.url);
   if ($('backups').hidden) panel.hidden = true;
   $('backups-text').textContent = backupsText(sites);
   $('backup-open').disabled = !free || !sites.length;
