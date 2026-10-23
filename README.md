@@ -283,7 +283,7 @@ sudo mv wp-cli.phar /usr/local/bin/wp
 | --- | --- |
 | macOS, with the demo | ✓ |
 | Hostinger | ✓ listing (updates tested on the demo) |
-| Windows | pending |
+| Windows 11, with the demo | ✓ |
 | cPanel | not tested yet |
 | SiteGround | not tested yet |
 | VPS | not tested yet |
