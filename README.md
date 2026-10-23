@@ -172,16 +172,14 @@ To undo a single plugin, you don't need a full restore. Log in to the server, go
 wp plugin install <plugin> --version=<old version> --force
 ```
 
-To restore a whole site, run these commands in the `wp-updater-free` folder. They use the tool's own key, so they work on any server you added. The examples restore the demo's `site1`: replace the user, host, port, backup folder and site folder with yours. **Settings** → **Excluded sites** shows each site's folder under its address.
+To restore a whole site, run these commands in the `wp-updater-free` folder (on Windows, in PowerShell). Each one is a single line: copy it whole. They use the tool's own key, so they work on any server you added. The examples restore the demo's `site1`: replace the user, host, port, backup folder and site folder with yours. **Settings** → **Excluded sites** shows each site's folder under its address.
 
 ### Restore the files
 
 This replaces the site's files with the ones in its full backup and deletes files that aren't in it. It keeps the server's `wp-config.php`.
 
 ```sh
-docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups \
-  -e "ssh -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -p 22" \
-  data/backups/demo@demo/site1.demo/full-backup/files/ demo@demo:/home/demo/sites/site1/
+docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups -e "ssh -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -p 22" data/backups/demo@demo/site1.demo/full-backup/files/ demo@demo:/home/demo/sites/site1/
 ```
 
 ### Restore the database
@@ -189,15 +187,13 @@ docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /w
 1. Upload the backup to the server's home folder. To undo the last update, upload `database.sql.gz`, the database from before it:
 
    ```sh
-   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
-     data/backups/demo@demo/site1.demo/database.sql.gz demo@demo:restore.sql.gz
+   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 data/backups/demo@demo/site1.demo/database.sql.gz demo@demo:restore.sql.gz
    ```
 
    If you restored the files of a full backup, upload its own database instead, so both are from the same day:
 
    ```sh
-   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
-     data/backups/demo@demo/site1.demo/full-backup/database.sql.gz demo@demo:restore.sql.gz
+   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 data/backups/demo@demo/site1.demo/full-backup/database.sql.gz demo@demo:restore.sql.gz
    ```
 
 2. Log in to the server:

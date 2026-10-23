@@ -172,16 +172,14 @@ Para deshacer un solo plugin no hace falta restaurar todo. Entra al servidor, ve
 wp plugin install <plugin> --version=<versión vieja> --force
 ```
 
-Para restaurar un sitio entero, corre estos comandos en la carpeta `wp-updater-free`. Usan la clave de la herramienta, así que funcionan en cualquier servidor que hayas agregado. Los ejemplos restauran el `site1` de la demo: cambia el usuario, host, puerto, carpeta de la copia y carpeta del sitio por los tuyos. **Settings** → **Excluded sites** muestra la carpeta de cada sitio debajo de su dirección.
+Para restaurar un sitio entero, corre estos comandos en la carpeta `wp-updater-free` (en Windows, en PowerShell). Cada uno ocupa una sola línea: cópialo entero. Usan la clave de la herramienta, así que funcionan en cualquier servidor que hayas agregado. Los ejemplos restauran el `site1` de la demo: cambia el usuario, host, puerto, carpeta de la copia y carpeta del sitio por los tuyos. **Settings** → **Excluded sites** muestra la carpeta de cada sitio debajo de su dirección.
 
 ### Restaura los archivos
 
 Esto reemplaza los archivos del sitio por los de su copia completa y borra los que no están en ella. Mantiene el `wp-config.php` del servidor.
 
 ```sh
-docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups \
-  -e "ssh -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -p 22" \
-  data/backups/demo@demo/site1.demo/full-backup/files/ demo@demo:/home/demo/sites/site1/
+docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /wp-content/updraft --exclude /wp-content/wpvividbackups -e "ssh -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -p 22" data/backups/demo@demo/site1.demo/full-backup/files/ demo@demo:/home/demo/sites/site1/
 ```
 
 ### Restaura la base de datos
@@ -189,15 +187,13 @@ docker compose exec app rsync -az --delete --exclude /wp-config.php --exclude /w
 1. Sube la copia a la carpeta personal del servidor. Para deshacer la última actualización, sube `database.sql.gz`, la base de datos de antes de actualizar:
 
    ```sh
-   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
-     data/backups/demo@demo/site1.demo/database.sql.gz demo@demo:restore.sql.gz
+   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 data/backups/demo@demo/site1.demo/database.sql.gz demo@demo:restore.sql.gz
    ```
 
    Si restauraste los archivos de una copia completa, sube en cambio su propia base de datos, así las dos partes son del mismo día:
 
    ```sh
-   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 \
-     data/backups/demo@demo/site1.demo/full-backup/database.sql.gz demo@demo:restore.sql.gz
+   docker compose exec app scp -i /ssh/id_ed25519 -o UserKnownHostsFile=/ssh/known_hosts -P 22 data/backups/demo@demo/site1.demo/full-backup/database.sql.gz demo@demo:restore.sql.gz
    ```
 
 2. Entra al servidor:
