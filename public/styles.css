@@ -175,7 +175,7 @@ a.button { display: inline-flex; align-items: center; text-decoration: none; }
 .domain { min-width: 0; max-width: 100%; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { flex: none; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--muted); font: 11px/18px var(--mono); }
 .summary { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--muted); font: 12px/1.6 var(--mono); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.summary.error { color: var(--red); white-space: normal; }
+.summary.error { color: var(--red); white-space: normal; overflow-wrap: anywhere; }   /* a long address breaks instead of being cut off on a phone */
 .mini { flex: none; width: 96px; }
 
 .site-status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
