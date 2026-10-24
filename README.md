@@ -6,12 +6,14 @@ WP Updater is a free tool that runs on your computer and keeps all your WordPres
 
 ![The Sites view with three demo sites waiting for updates](docs/screenshot.png)
 
+See it working in your browser, with fake sites, before installing anything: **[wp-updater-free-site.vercel.app](https://wp-updater-free-site.vercel.app)**. If it saves you time, a star on GitHub helps other people find it.
+
 ## How it works
 
 - The tool runs in Docker on your computer and opens a page at `http://localhost:8787`. Only your computer can reach it.
 - It logs in to your servers with its own SSH key, which you add to each server once.
 - On each server it finds the WordPress sites in the account's home folder and asks WP-CLI what's pending.
-- Nothing is installed on the sites. Your settings, the SSH key and the backups stay on your computer, in the `data/` folder.
+- Nothing is installed on the sites. Everything stays on your computer: your settings and the backups in the `data/` folder, and the SSH key in a Docker volume of its own.
 
 ## Safety
 
