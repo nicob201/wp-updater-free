@@ -63,6 +63,15 @@ test("listing: updates the server can't apply aren't pending and say what they n
   assert.equal(s.status, 'pending');
 });
 
+// WP-CLI lists must-use plugins and drop-ins with update: false: it can't update them, so they're never pending
+test('listing: must-use plugins and drop-ins are not pending', () => {
+  const e = S.newState(); S.listingLine(e, LIST, 1);
+  S.listingLine(e, SITE(SV, 'a', { plugins: [
+    { name: 'host-tools', status: 'must-use', update: false, version: '1.0', update_version: '' },
+    { name: 'object-cache.php', status: 'dropin', update: false, version: '', update_version: '' }] }), 2);
+  assert.equal(e.sites[A_ID].status, 'up-to-date');
+});
+
 test("listing: a site whose only updates can't be applied is up to date", () => {
   const e = S.newState(); S.listingLine(e, LIST, 1);
   S.listingLine(e, SITE(SV, 'a', { wp: '7.1.3', plugins: [CF7] }), 2);
