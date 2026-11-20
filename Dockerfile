@@ -6,7 +6,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY server.js updater.sh ./
+COPY server.js updater.sh package.json ./
 COPY lib lib
 COPY public public
 

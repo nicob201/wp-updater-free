@@ -95,6 +95,7 @@ test('creates the SSH key once and publishes the public half', async () => {
   const s = await start();
   const e = await waitState(s, e => !!e.publicKey);
   assert.match(e.publicKey, /^ssh-ed25519 \S+ wp-updater$/);
+  assert.equal(e.version, require('../package.json').version);
   assert.equal(fs.statSync(path.join(s.dir, 'ssh', 'id_ed25519')).mode & 0o777, 0o600);
   s.proc.kill('SIGKILL');
   const s2 = await start({ WPU_DATA: s.dir });
