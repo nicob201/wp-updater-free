@@ -502,6 +502,7 @@ function render() {
     on ? el.setAttribute('aria-current', 'page') : el.removeAttribute('aria-current');
   renderSettings();
   if (!state) return;
+  $('version').textContent = state.version ? ` v${state.version}` : '';
   const r = state.run;
   document.title = r?.active && r.n ? `(${r.n}/${r.sites.length}) WP Updater` : 'WP Updater';
   renderSites();

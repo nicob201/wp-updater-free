@@ -275,11 +275,17 @@ input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(-
   word-break: break-all;
 }
 
+.footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; width: min(1032px, calc(100% - 48px)); margin: 0 auto; padding: 20px 0 32px; border-top: 1px solid var(--border); color: var(--dim); font-size: 13px; }
+.footer nav { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+.footer a { color: var(--muted); text-underline-offset: 3px; }
+.footer a:hover { color: var(--text); }
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 5px; border: 2px solid var(--bg); }
 
 @media (max-width: 720px) {
   .nav-inner, .page { padding-left: 16px; padding-right: 16px; }
+  .footer { width: calc(100% - 32px); }
   .actions { width: 100%; }
   .actions .button { flex: 1; }
   .toggle { grid-template-columns: minmax(0, 1fr) auto 16px; }

@@ -40,6 +40,7 @@ const state = S.newState();
 state.publicKey = fs.readFileSync(`${KEY}.pub`, 'utf8').trim();
 applyConfig(config);
 state.hardlinks = B.canHardlink(BACKUPS);
+state.version = require('./package.json').version;   // bump it in package.json before tagging a release
 const clients = new Set();
 let listing = [];     // listing processes in progress, one per server
 let listingGen = 0;   // a restarted listing ignores what the killed one still prints
