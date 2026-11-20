@@ -18,6 +18,9 @@ const RE_SLUG = /^[a-z0-9][a-z0-9._-]{0,99}$/;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const TYPES = { core: 'Core', plugin: 'Plugin', theme: 'Theme' };
+const OPEN_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>';
+// The address comes from the server's WordPress: only http(s) is linked, never javascript: and the like
+const webUrl = u => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : null; } catch { return null; } };
 const CHEVRON = '<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>';
 const OFFLINE = 'No connection with the local server. Start it again.';
 // The hosting only fills in its usual port and says where each value is: it isn't saved
@@ -168,7 +171,7 @@ function rowHTML(s, canUpdate) {
         <span class="site-status ${cls}"><i class="dot"></i>${text}</span>
         ${CHEVRON}
       </button>
-      <span class="action">${can ? `<button class="button secondary small" type="button" data-update="${esc(s.id)}">Update</button>` : ''}</span>
+      <span class="action">${webUrl(s.url) ? `<a class="visit" href="${esc(webUrl(s.url))}" target="_blank" rel="noopener" aria-label="Open ${esc(s.url)} in a new tab" title="Open site">${OPEN_ICON}</a>` : ''}${can ? `<button class="button secondary small" type="button" data-update="${esc(s.id)}">Update</button>` : ''}</span>
     </div>
     ${open ? `<div class="details">${detailsHTML(s)}</div>` : ''}`;
 }
