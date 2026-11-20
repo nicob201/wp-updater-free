@@ -12,6 +12,7 @@ const [A, B, C] = ['a', 'b', 'c'].map(p => `aaaaaaaa:/sites/${p}`);
 const MAIN = { id: 'aaaaaaaa', name: 'Main', host: 'main.test', port: 22, user: 'u', path: '' };
 const OTHER = { id: 'bbbbbbbb', name: 'Other', host: 'other.test', port: 22, user: 'u', path: '' };
 const CONFIG = { servers: [MAIN], exclude: ['elementor', 'elementor-pro'] };
+let nextPort = 20000 + Math.floor(Math.random() * 9000);   // one after another: two servers alive at once never get the same port
 const procs = [];
 const dirs = new Set();
 
@@ -25,7 +26,7 @@ test.after(() => {
 
 // Starts the bridge on a temp data dir; the config is written only for a new dir
 async function start(env = {}, config = CONFIG) {
-  const port = env.WPU_PORT || String(20000 + Math.floor(Math.random() * 10000));
+  const port = env.WPU_PORT || String(nextPort++);
   const dir = env.WPU_DATA || fs.mkdtempSync(path.join(os.tmpdir(), 'wpu-'));
   if (!env.WPU_DATA) fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(config));
   const proc = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
