@@ -150,7 +150,11 @@ a.button { display: inline-flex; align-items: center; text-decoration: none; }
 .site.open { background: var(--open); }
 
 .row { display: flex; align-items: center; gap: 12px; padding-right: 16px; }
-.action { flex: none; width: 96px; display: flex; justify-content: flex-end; }   /* same width with or without a button: statuses stay aligned */
+.action { flex: none; width: 132px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }   /* same width with or without a button: statuses stay aligned */
+
+.visit { margin-right: auto; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: var(--muted); }
+.visit:hover { background: #1a1a1a; color: var(--text); }
+.visit svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 .toggle {
   flex: 1;
